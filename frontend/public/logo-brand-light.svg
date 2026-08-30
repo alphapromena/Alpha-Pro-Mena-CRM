@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 72" fill="none">
+  <defs>
+    <linearGradient id="crimsonLight" x1="15%" y1="0%" x2="85%" y2="100%">
+      <stop offset="0%" stopColor="#FF1E57" />
+      <stop offset="50%" stopColor="#E92156" />
+      <stop offset="100%" stopColor="#B7274F" />
+    </linearGradient>
+    <linearGradient id="neutralLight" x1="15%" y1="0%" x2="85%" y2="100%">
+      <stop offset="0%" stopColor="#45474A" />
+      <stop offset="50%" stopColor="#313234" />
+      <stop offset="100%" stopColor="#000000" />
+    </linearGradient>
+  </defs>
+  <!-- Mark -->
+  <g transform="translate(0, 0)">
+    <path
+      d="M20 8 C9 8 2 15 2 26 L2 46 C2 57 9 64 20 64 L38 64 C49 64 56 57 56 46 L56 36 L44 36 L44 46 C44 50 41 53 36 53 L22 53 C17 53 14 50 14 46 L14 26 C14 22 17 19 22 19 L38 19 C43 19 46 22 46 26 L46 29 L58 29 L58 26 C58 15 51 8 40 8 Z"
+      fill="url(#crimsonLight)"
+    />
+    <path
+      d="M62 8 C51 8 44 15 44 26 L44 36 L56 36 L56 26 C56 22 59 19 64 19 L78 19 C83 19 86 22 86 26 L86 46 C86 50 83 53 78 53 L62 53 C57 53 54 50 54 46 L54 43 L42 43 L42 46 C42 57 49 64 60 64 L80 64 C91 64 98 57 98 46 L98 26 C98 15 91 8 80 8 Z"
+      fill="url(#neutralLight)"
+    />
+  </g>
+  <!-- Typography in Barlow -->
+  <text x="116" y="38" font-family="'Barlow', sans-serif" font-weight="800" font-size="28" fill="#313234" letter-spacing="1.2">ALPHA PRO</text>
+  <text x="117" y="58" font-family="'Barlow', sans-serif" font-weight="500" font-size="14" fill="#313234" letter-spacing="4.8">MENA</text>
+</svg>

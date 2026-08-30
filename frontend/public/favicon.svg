@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+  <defs>
+    <!-- Left Loop: Alpha Pro Signature Crimson Red -->
+    <linearGradient id="favRed" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FF386B" />
+      <stop offset="50%" stop-color="#FF1E57" />
+      <stop offset="100%" stop-color="#D61546" />
+    </linearGradient>
+
+    <!-- Right Loop: Crisp White with subtle silver depth -->
+    <linearGradient id="favWhite" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF" />
+      <stop offset="75%" stop-color="#F3F2F1" />
+      <stop offset="100%" stop-color="#DCDAD8" />
+    </linearGradient>
+  </defs>
+
+  <!-- 1. LEFT LOOP — Crimson Red (#FF1E57) -->
+  <path
+    d="M24 22 C13 22 6 29 6 40 L6 60 C6 71 13 78 24 78 L42 78 C53 78 60 71 60 60 L60 50 L48 50 L48 60 C48 64 45 67 40 67 L24 67 C19 67 16 64 16 60 L16 40 C16 36 19 33 24 33 L40 33 C45 33 48 36 48 40 L48 43 L60 43 L60 40 C60 29 53 22 42 22 Z"
+    fill="url(#favRed)"
+  />
+
+  <!-- 2. RIGHT LOOP — Crisp White (#FFFFFF) with subtle outline for light/dark tab contrast -->
+  <path
+    d="M58 22 C47 22 40 29 40 40 L40 50 L52 50 L52 40 C52 36 55 33 60 33 L76 33 C81 33 84 36 84 40 L84 60 C84 64 81 67 76 67 L60 67 C55 67 52 64 52 60 L52 57 L40 57 L40 60 C40 71 47 78 58 78 L78 78 C89 78 96 71 96 60 L96 40 C96 29 89 22 78 22 Z"
+    fill="url(#favWhite)"
+    stroke="#222428"
+    stroke-width="1.2"
+  />
+</svg>

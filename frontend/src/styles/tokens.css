@@ -1,0 +1,543 @@
+/**
+ * Alpha Pro MENA CRM Design System Tokens
+ * 
+ * Authoritative Brand Identity: Extracted from Alpha MENA Branding Kit (1).pdf
+ * Primary Palette:
+ *   --color-brand-crimson: #FF1E57 (Vibrant Signature Accent)
+ *   --color-brand-deep:    #E92156 (Deep Crimson-Pink)
+ *   --color-brand-berry:   #B7274F (Rich Berry Magenta / Active / Borders)
+ *   --color-brand-charcoal:#313234 (Primary Dark Neutral)
+ *   --color-brand-warm:    #F3F2F1 (Light Warm Gray / Off-White)
+ *   --color-brand-black:   #000000 / #18191A (Midnight Deep)
+ * 
+ * Typography: Barlow (Primary & Display), Cairo (Arabic RTL)
+ * 
+ * 4 Complete Persistent Themes:
+ *   alpha_pro    — Official Alpha Pro MENA Brand Flagship (Charcoal + Crimson)
+ *   black_beige  — Midnight Obsidian (High-Contrast Luxury Terminal)
+ *   pro_light    — Clean Enterprise Light (Crisp Warm Gray + Crimson)
+ *   pro_dark     — Deep Slate Productivity (Focused Dark Mode)
+ */
+
+/* ==========================================================================
+   THEME 1: ALPHA PRO (Official Brand Flagship — Charcoal & Crimson)
+   ========================================================================== */
+:root,
+[data-theme="alpha_pro"] {
+  --theme-id: "alpha_pro";
+
+  /* Brand Signature */
+  --color-primary:         #FF1E57;
+  --color-primary-hover:   #E92156;
+  --color-primary-subtle:  rgba(255, 30, 87, 0.12);
+  --color-accent:          #FF1E57;
+  --color-accent-hover:    #B7274F;
+  --color-accent-light:    rgba(255, 30, 87, 0.15);
+  --logo-loop-secondary:   #F3F2F1;
+
+  /* Backgrounds & Surfaces — Deep Matte Brand Charcoal */
+  --bg-app:              #181A1D;
+  --bg-surface:          #22262B;
+  --bg-surface-elevated: #2A2F36;
+  --bg-sidebar:          #111315;
+  --bg-sidebar-hover:    rgba(255, 30, 87, 0.08);
+  --bg-sidebar-active:   rgba(255, 30, 87, 0.18);
+  --sidebar-active-text: #FF1E57;
+  --bg-subtle:           #1D2126;
+
+  /* Borders — architectural contrast */
+  --border-color:        #333A44;
+  --border-light:        #272D35;
+  --border-strong:       #485260;
+
+  /* Text neutrals — crisp readability on charcoal */
+  --neutral-0:    #0E1012;
+  --neutral-50:   #15171A;
+  --neutral-100:  #1D2126;
+  --neutral-200:  #2A2F36;
+  --neutral-300:  #434B56;
+  --neutral-400:  #758190;
+  --neutral-500:  #9EAAB8;
+  --neutral-600:  #C4CDD8;
+  --neutral-700:  #DDE3EA;
+  --neutral-800:  #EEF2F6;
+  --neutral-900:  #F8F9FA;
+  --neutral-950:  #FFFFFF;
+
+  /* Semantic */
+  --color-success:        #10B981;
+  --color-success-bg:     rgba(16, 185, 129, 0.12);
+  --color-success-border: rgba(16, 185, 129, 0.25);
+  --color-success-text:   #6EE7B7;
+
+  --color-warning:        #F59E0B;
+  --color-warning-bg:     rgba(245, 158, 11, 0.12);
+  --color-warning-border: rgba(245, 158, 11, 0.25);
+  --color-warning-text:   #FCD34D;
+
+  --color-danger:         #EF4444;
+  --color-danger-bg:      rgba(239, 68, 68, 0.12);
+  --color-danger-border:  rgba(239, 68, 68, 0.25);
+  --color-danger-text:    #FCA5A5;
+
+  --color-info:           #0EA5E9;
+  --color-info-bg:        rgba(14, 165, 233, 0.12);
+  --color-info-border:    rgba(14, 165, 233, 0.25);
+  --color-info-text:      #7DD3FC;
+
+  /* CRM Status Colors */
+  --status-new-bg:          rgba(99, 102, 241, 0.14);
+  --status-new-text:        #A5B4FC;
+  --status-new-border:      rgba(99, 102, 241, 0.28);
+
+  --status-interested-bg:   rgba(255, 30, 87, 0.14);
+  --status-interested-text: #FF6B93;
+  --status-interested-border: rgba(255, 30, 87, 0.32);
+
+  --status-inprogress-bg:   rgba(168, 85, 247, 0.14);
+  --status-inprogress-text: #D8B4FE;
+  --status-inprogress-border: rgba(168, 85, 247, 0.28);
+
+  --status-demo-bg:         rgba(249, 115, 22, 0.14);
+  --status-demo-text:       #FDBA74;
+  --status-demo-border:     rgba(249, 115, 22, 0.28);
+
+  --status-proposal-bg:     rgba(233, 33, 86, 0.16);
+  --status-proposal-text:   #FDA4AF;
+  --status-proposal-border: rgba(233, 33, 86, 0.32);
+
+  --status-won-bg:          rgba(16, 185, 129, 0.16);
+  --status-won-text:        #6EE7B7;
+  --status-won-border:      rgba(16, 185, 129, 0.30);
+
+  --status-lost-bg:         rgba(239, 68, 68, 0.14);
+  --status-lost-text:       #FCA5A5;
+  --status-lost-border:     rgba(239, 68, 68, 0.28);
+
+  --status-dnc-bg:          #2A2F36;
+  --status-dnc-text:        #9EAAB8;
+  --status-dnc-border:      #434B56;
+
+  --status-noanswer-bg:     rgba(245, 158, 11, 0.14);
+  --status-noanswer-text:   #FCD34D;
+  --status-noanswer-border: rgba(245, 158, 11, 0.28);
+
+  /* Typography */
+  --font-sans:    'Barlow', 'Inter', system-ui, -apple-system, sans-serif;
+  --font-display: 'Barlow', 'Plus Jakarta Sans', system-ui, sans-serif;
+  --font-arabic:  'Cairo', 'Tajawal', system-ui, sans-serif;
+  --font-mono:    'JetBrains Mono', 'Consolas', monospace;
+
+  /* Typography Scale */
+  --text-xs:   0.75rem;   /* 12px */
+  --text-sm:   0.875rem;  /* 14px */
+  --text-base: 1rem;      /* 16px */
+  --text-lg:   1.125rem;  /* 18px */
+  --text-xl:   1.25rem;   /* 20px */
+  --text-2xl:  1.5rem;    /* 24px */
+  --text-3xl:  1.875rem;  /* 30px */
+  --text-4xl:  2.25rem;   /* 36px */
+
+  /* Spacing */
+  --space-1: 0.25rem;  /* 4px */
+  --space-2: 0.5rem;   /* 8px */
+  --space-3: 0.75rem;  /* 12px */
+  --space-4: 1rem;      /* 16px */
+  --space-5: 1.25rem;  /* 20px */
+  --space-6: 1.5rem;   /* 24px */
+  --space-8: 2rem;     /* 32px */
+  --space-10: 2.5rem;  /* 40px */
+  --space-12: 3rem;    /* 48px */
+
+  /* Radius */
+  --radius-xs: 3px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-2xl: 20px;
+  --radius-full: 9999px;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4), 0 2px 4px -2px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.5), 0 4px 6px -4px rgba(0, 0, 0, 0.4);
+  --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.6), 0 8px 10px -6px rgba(0, 0, 0, 0.5);
+  --shadow-accent: 0 4px 16px rgba(255, 30, 87, 0.35);
+
+  /* Transitions */
+  --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-base: 250ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-slow: 350ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ==========================================================================
+   THEME 2: BLACK & BEIGE (Luxury Enterprise Obsidian Charcoal & Champagne Gold)
+   ========================================================================== */
+[data-theme="black_beige"] {
+  --theme-id: "black_beige";
+
+  /* Brand Signature — Controlled Alpha Pro MENA Gold Accent */
+  --color-primary:         #C89B3C;
+  --color-primary-hover:   #D8AA47;
+  --color-primary-subtle:  rgba(200, 155, 60, 0.12);
+  --color-accent:          #C89B3C;
+  --color-accent-hover:    #D8AA47;
+  --color-accent-light:    rgba(200, 155, 60, 0.15);
+  --logo-loop-secondary:   #F3F2F1;
+
+  /* Backgrounds & Surfaces — Deep Near-Black & Charcoal */
+  --bg-app:              #0D0F14;
+  --bg-surface:          #161922;
+  --bg-surface-elevated: #1E2330;
+  --bg-sidebar:          #090B0F;
+  --bg-sidebar-hover:    rgba(200, 155, 60, 0.08);
+  --bg-sidebar-active:   rgba(200, 155, 60, 0.16);
+  --sidebar-active-text: #D4AF37;
+  --bg-subtle:           #1A1D27;
+
+  /* Borders — architectural subtle neutral */
+  --border-color:        #262B38;
+  --border-light:        #1C202B;
+  --border-strong:       #383F52;
+
+  /* Text neutrals — crisp warm off-white and muted sand */
+  --neutral-0:    #080A0D;
+  --neutral-50:   #0E1015;
+  --neutral-100:  #171920;
+  --neutral-200:  #232732;
+  --neutral-300:  #3D4456;
+  --neutral-400:  #8C867A;
+  --neutral-500:  #A8A193;
+  --neutral-600:  #C7C0B3;
+  --neutral-700:  #DDD7CB;
+  --neutral-800:  #ECE7DC;
+  --neutral-900:  #F6F3EC;
+  --neutral-950:  #FFFFFF;
+
+  /* Semantic — Restrained on dark charcoal surfaces */
+  --color-success:        #10B981;
+  --color-success-bg:     rgba(16, 185, 129, 0.12);
+  --color-success-border: rgba(16, 185, 129, 0.25);
+  --color-success-text:   #6EE7B7;
+
+  --color-warning:        #F59E0B;
+  --color-warning-bg:     rgba(245, 158, 11, 0.12);
+  --color-warning-border: rgba(245, 158, 11, 0.25);
+  --color-warning-text:   #FCD34D;
+
+  --color-danger:         #EF4444;
+  --color-danger-bg:      rgba(239, 68, 68, 0.12);
+  --color-danger-border:  rgba(239, 68, 68, 0.25);
+  --color-danger-text:    #FCA5A5;
+
+  --color-info:           #0EA5E9;
+  --color-info-bg:        rgba(14, 165, 233, 0.12);
+  --color-info-border:    rgba(14, 165, 233, 0.25);
+  --color-info-text:      #7DD3FC;
+
+  /* Status Colors — Luxury Obsidian Compatible */
+  --status-new-bg:          rgba(99, 102, 241, 0.14);
+  --status-new-text:        #A5B4FC;
+  --status-new-border:      rgba(99, 102, 241, 0.28);
+
+  --status-interested-bg:   rgba(200, 155, 60, 0.14);
+  --status-interested-text: #E5BE65;
+  --status-interested-border: rgba(200, 155, 60, 0.32);
+
+  --status-inprogress-bg:   rgba(168, 85, 247, 0.14);
+  --status-inprogress-text: #D8B4FE;
+  --status-inprogress-border: rgba(168, 85, 247, 0.28);
+
+  --status-demo-bg:         rgba(249, 115, 22, 0.14);
+  --status-demo-text:       #FDBA74;
+  --status-demo-border:     rgba(249, 115, 22, 0.28);
+
+  --status-proposal-bg:     rgba(200, 155, 60, 0.16);
+  --status-proposal-text:   #F3D382;
+  --status-proposal-border: rgba(200, 155, 60, 0.35);
+
+  --status-won-bg:          rgba(16, 185, 129, 0.16);
+  --status-won-text:        #6EE7B7;
+  --status-won-border:      rgba(16, 185, 129, 0.30);
+
+  --status-lost-bg:         rgba(239, 68, 68, 0.14);
+  --status-lost-text:       #FCA5A5;
+  --status-lost-border:     rgba(239, 68, 68, 0.28);
+
+  --status-dnc-bg:          #1E2330;
+  --status-dnc-text:        #A8A193;
+  --status-dnc-border:      #383F52;
+
+  --status-noanswer-bg:     rgba(245, 158, 11, 0.14);
+  --status-noanswer-text:   #FCD34D;
+  --status-noanswer-border: rgba(245, 158, 11, 0.28);
+
+  /* Shadows — Deep Obsidian Elevation */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.5), 0 2px 4px -2px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.6), 0 4px 6px -4px rgba(0, 0, 0, 0.5);
+  --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.7), 0 8px 10px -6px rgba(0, 0, 0, 0.6);
+  --shadow-accent: 0 4px 16px rgba(200, 155, 60, 0.35);
+}
+
+/* ==========================================================================
+   THEME 3: PRO LIGHT (Executive Royal Sapphire & Cool Ice Slate)
+   ========================================================================== */
+[data-theme="pro_light"] {
+  --theme-id: "pro_light";
+
+  /* Brand Signature — Executive Sapphire & Electric Sky */
+  --color-primary:         #1D4ED8;
+  --color-primary-hover:   #1E40AF;
+  --color-primary-subtle:  rgba(29, 78, 216, 0.09);
+  --color-accent:          #0284C7;
+  --color-accent-hover:    #0369A1;
+  --color-accent-light:    rgba(2, 132, 199, 0.12);
+  --logo-loop-secondary:   #1D4ED8;
+
+  /* Backgrounds & Surfaces — Cool Architectural Slate */
+  --bg-app:              #F3F5F9;
+  --bg-surface:          #FFFFFF;
+  --bg-surface-elevated: #EBF0F7;
+  --bg-sidebar:          #0B132B;
+  --bg-sidebar-hover:    rgba(29, 78, 216, 0.14);
+  --bg-sidebar-active:   rgba(29, 78, 216, 0.28);
+  --sidebar-active-text: #60A5FA;
+  --bg-subtle:           #E2E8F2;
+
+  /* Borders — subtle blue-slate */
+  --border-color:        #DCE3EE;
+  --border-light:        #EBF0F7;
+  --border-strong:       #C4CFDF;
+
+  /* Text neutrals */
+  --neutral-0:    #FFFFFF;
+  --neutral-50:   #F8FAFC;
+  --neutral-100:  #F1F5F9;
+  --neutral-200:  #E2E8F0;
+  --neutral-300:  #CBD5E1;
+  --neutral-400:  #94A3B8;
+  --neutral-500:  #64748B;
+  --neutral-600:  #475569;
+  --neutral-700:  #334155;
+  --neutral-800:  #1E293B;
+  --neutral-900:  #0F172A;
+  --neutral-950:  #020617;
+
+  /* Semantic Light */
+  --color-success:        #059669;
+  --color-success-bg:     #ECFDF5;
+  --color-success-border: #A7F3D0;
+  --color-success-text:   #065F46;
+
+  --color-warning:        #D97706;
+  --color-warning-bg:     #FFFBEB;
+  --color-warning-border: #FDE68A;
+  --color-warning-text:   #92400E;
+
+  --color-danger:         #DC2626;
+  --color-danger-bg:      #FEF2F2;
+  --color-danger-border:  #FECACA;
+  --color-danger-text:    #991B1B;
+
+  --color-info:           #0284C7;
+  --color-info-bg:        #F0F9FF;
+  --color-info-border:    #BAE6FD;
+  --color-info-text:      #075985;
+
+  /* CRM Status Colors Light */
+  --status-new-bg:          #EEF2FF;
+  --status-new-text:        #4338CA;
+  --status-new-border:      #C7D2FE;
+
+  --status-interested-bg:   #EFF6FF;
+  --status-interested-text: #1D4ED8;
+  --status-interested-border: #BFDBFE;
+
+  --status-inprogress-bg:   #F3E8FF;
+  --status-inprogress-text: #6B21A8;
+  --status-inprogress-border: #E9D5FF;
+
+  --status-demo-bg:         #FFF7ED;
+  --status-demo-text:       #C2410C;
+  --status-demo-border:     #FFEDD5;
+
+  --status-proposal-bg:     #FDF2F8;
+  --status-proposal-text:   #9D174D;
+  --status-proposal-border: #FCE7F3;
+
+  --status-won-bg:          #ECFDF5;
+  --status-won-text:        #065F46;
+  --status-won-border:      #A7F3D0;
+
+  --status-lost-bg:         #FEF2F2;
+  --status-lost-text:       #991B1B;
+  --status-lost-border:     #FECACA;
+
+  --status-dnc-bg:          #F1F5F9;
+  --status-dnc-text:        #64748B;
+  --status-dnc-border:      #CBD5E1;
+
+  --status-noanswer-bg:     #FFFBEB;
+  --status-noanswer-text:   #92400E;
+  --status-noanswer-border: #FDE68A;
+
+  /* Shadows Light */
+  --shadow-sm: 0 1px 2px rgba(11, 19, 43, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(11, 19, 43, 0.07), 0 2px 4px -2px rgba(11, 19, 43, 0.05);
+  --shadow-lg: 0 10px 15px -3px rgba(11, 19, 43, 0.08), 0 4px 6px -4px rgba(11, 19, 43, 0.05);
+  --shadow-xl: 0 20px 25px -5px rgba(11, 19, 43, 0.10), 0 8px 10px -6px rgba(11, 19, 43, 0.05);
+  --shadow-accent: 0 4px 16px rgba(29, 78, 216, 0.28);
+}
+
+/* ==========================================================================
+   THEME 4: PRO DARK (Midnight Cyber-Terminal & Luminous Crimson / Cyan)
+   ========================================================================== */
+[data-theme="pro_dark"] {
+  --theme-id: "pro_dark";
+
+  /* Brand Signature — Neon Crimson & Luminous Cyan */
+  --color-primary:         #FF2A65;
+  --color-primary-hover:   #FF1E57;
+  --color-primary-subtle:  rgba(255, 42, 101, 0.15);
+  --color-accent:          #38BDF8;
+  --color-accent-hover:    #0EA5E9;
+  --color-accent-light:    rgba(56, 189, 248, 0.16);
+  --logo-loop-secondary:   #FFFFFF;
+
+  /* Backgrounds — pitch midnight cyber-slate */
+  --bg-app:              #090B10;
+  --bg-surface:          #101420;
+  --bg-surface-elevated: #181E30;
+  --bg-sidebar:          #06070B;
+  --bg-sidebar-hover:    rgba(255, 42, 101, 0.09);
+  --bg-sidebar-active:   rgba(255, 42, 101, 0.22);
+  --sidebar-active-text: #38BDF8;
+  --bg-subtle:           #141926;
+
+  /* Borders — luminous cyber-blue edge */
+  --border-color:        #1E2538;
+  --border-light:        #151A27;
+  --border-strong:       #2D3854;
+
+  /* Text neutrals — cool cyber-silver */
+  --neutral-0:    #06070B;
+  --neutral-50:   #0B0E14;
+  --neutral-100:  #101420;
+  --neutral-200:  #181E30;
+  --neutral-300:  #28314A;
+  --neutral-400:  #53607E;
+  --neutral-500:  #8291B0;
+  --neutral-600:  #ABB8D2;
+  --neutral-700:  #CCD6E8;
+  --neutral-800:  #E5ECF6;
+  --neutral-900:  #F2F6FA;
+  --neutral-950:  #FFFFFF;
+
+  /* Semantic — vibrant pop on dark surfaces */
+  --color-success:        #10B981;
+  --color-success-bg:     rgba(16, 185, 129, 0.14);
+  --color-success-border: rgba(16, 185, 129, 0.28);
+  --color-success-text:   #6EE7B7;
+
+  --color-warning:        #F59E0B;
+  --color-warning-bg:     rgba(245, 158, 11, 0.14);
+  --color-warning-border: rgba(245, 158, 11, 0.28);
+  --color-warning-text:   #FCD34D;
+
+  --color-danger:         #EF4444;
+  --color-danger-bg:      rgba(239, 68, 68, 0.14);
+  --color-danger-border:  rgba(239, 68, 68, 0.28);
+  --color-danger-text:    #FCA5A5;
+
+  --color-info:           #0EA5E9;
+  --color-info-bg:        rgba(14, 165, 233, 0.14);
+  --color-info-border:    rgba(14, 165, 233, 0.28);
+  --color-info-text:      #7DD3FC;
+
+  /* CRM Status Colors */
+  --status-new-bg:          rgba(99, 102, 241, 0.16);
+  --status-new-text:        #A5B4FC;
+  --status-new-border:      rgba(99, 102, 241, 0.32);
+
+  --status-interested-bg:   rgba(255, 42, 101, 0.16);
+  --status-interested-text: #FF759E;
+  --status-interested-border: rgba(255, 42, 101, 0.35);
+
+  --status-inprogress-bg:   rgba(168, 85, 247, 0.16);
+  --status-inprogress-text: #D8B4FE;
+  --status-inprogress-border: rgba(168, 85, 247, 0.32);
+
+  --status-demo-bg:         rgba(249, 115, 22, 0.16);
+  --status-demo-text:       #FDBA74;
+  --status-demo-border:     rgba(249, 115, 22, 0.32);
+
+  --status-proposal-bg:     rgba(233, 33, 86, 0.16);
+  --status-proposal-text:   #FDA4AF;
+  --status-proposal-border: rgba(233, 33, 86, 0.34);
+
+  --status-won-bg:          rgba(16, 185, 129, 0.16);
+  --status-won-text:        #6EE7B7;
+  --status-won-border:      rgba(16, 185, 129, 0.32);
+
+  --status-lost-bg:         rgba(239, 68, 68, 0.15);
+  --status-lost-text:       #FCA5A5;
+  --status-lost-border:     rgba(239, 68, 68, 0.30);
+
+  --status-dnc-bg:          rgba(40, 49, 74, 0.80);
+  --status-dnc-text:        #8291B0;
+  --status-dnc-border:      #28314A;
+
+  --status-noanswer-bg:     rgba(245, 158, 11, 0.15);
+  --status-noanswer-text:   #FCD34D;
+  --status-noanswer-border: rgba(245, 158, 11, 0.30);
+
+  /* Shadows */
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.55);
+  --shadow-md: 0 4px 8px -1px rgba(0, 0, 0, 0.60), 0 2px 4px -2px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 10px 20px -3px rgba(0, 0, 0, 0.70), 0 4px 8px -4px rgba(0, 0, 0, 0.55);
+  --shadow-xl: 0 24px 32px -5px rgba(0, 0, 0, 0.80), 0 8px 12px -6px rgba(0, 0, 0, 0.65);
+  --shadow-accent: 0 4px 22px rgba(255, 42, 101, 0.45);
+
+  /* Typography */
+  --font-sans:    'Barlow', 'Inter', system-ui, -apple-system, sans-serif;
+  --font-display: 'Barlow', 'Plus Jakarta Sans', system-ui, sans-serif;
+  --font-arabic:  'Cairo', 'Tajawal', system-ui, sans-serif;
+  --font-mono:    'JetBrains Mono', 'Consolas', monospace;
+}
+
+/* ==========================================================================
+   GLOBAL UTILITIES & BRAND STYLES
+   ========================================================================== */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: var(--font-sans);
+  background-color: var(--bg-app);
+  color: var(--neutral-900);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Typography Helpers */
+.font-display {
+  font-family: var(--font-display);
+}
+
+.font-arabic {
+  font-family: var(--font-arabic);
+}
+
+/* RTL Helpers */
+[dir="rtl"] {
+  font-family: var(--font-arabic), var(--font-sans);
+}
+
+[dir="rtl"] .font-display {
+  font-family: var(--font-arabic), var(--font-display);
+}
