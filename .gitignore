@@ -67,3 +67,6 @@ desktop.ini
 # ── Local DB backups / alembic scratch ──────────────────────────────────────
 backend/backups/
 api/__pycache__/
+
+.vercel
+.env*

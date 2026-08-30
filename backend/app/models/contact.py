@@ -77,16 +77,17 @@ class Contact(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     company_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         Uuid, ForeignKey("companies.id", ondelete="SET NULL"), nullable=True, index=True
     )
-    position: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    position: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     department: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
 
     # Communication
     email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
     normalized_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
     secondary_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    phone: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, index=True)
+    # 255 not 50: imported sheets occasionally carry free text here; PostgreSQL enforces the limit
+    phone: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
     normalized_phone: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, index=True)
-    secondary_phone: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    secondary_phone: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
     # Context
     country: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, index=True)

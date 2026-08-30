@@ -1,8 +1,8 @@
 """baseline schema
 
-Revision ID: 3b8fbf328037
+Revision ID: b6d7df55ae73
 Revises: 
-Create Date: 2026-08-30 12:36:57.698108+00:00
+Create Date: 2026-08-30 13:16:27.887596+00:00
 
 """
 from typing import Sequence, Union
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = '3b8fbf328037'
+revision: str = 'b6d7df55ae73'
 down_revision: Union[str, None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -192,14 +192,14 @@ def upgrade() -> None:
     sa.Column('first_name', sa.String(length=100), nullable=False),
     sa.Column('last_name', sa.String(length=100), nullable=True),
     sa.Column('company_id', sa.Uuid(), nullable=True),
-    sa.Column('position', sa.String(length=200), nullable=True),
+    sa.Column('position', sa.String(length=255), nullable=True),
     sa.Column('department', sa.String(length=200), nullable=True),
     sa.Column('email', sa.String(length=255), nullable=True),
     sa.Column('normalized_email', sa.String(length=255), nullable=True),
     sa.Column('secondary_email', sa.String(length=255), nullable=True),
-    sa.Column('phone', sa.String(length=50), nullable=True),
+    sa.Column('phone', sa.String(length=255), nullable=True),
     sa.Column('normalized_phone', sa.String(length=50), nullable=True),
-    sa.Column('secondary_phone', sa.String(length=50), nullable=True),
+    sa.Column('secondary_phone', sa.String(length=255), nullable=True),
     sa.Column('country', sa.String(length=100), nullable=True),
     sa.Column('industry', sa.String(length=100), nullable=True),
     sa.Column('source', sa.String(length=100), nullable=True),

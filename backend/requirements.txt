@@ -1,3 +1,4 @@
+# NOTE: the root requirements.txt (used by Vercel) must be kept identical to this file.
 fastapi==0.115.0
 uvicorn[standard]==0.30.6
 sqlalchemy[asyncio]==2.0.35
