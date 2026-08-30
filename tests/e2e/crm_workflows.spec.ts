@@ -1,5 +1,12 @@
 import { test, expect } from '@playwright/test';
 
+// Credentials come from the environment; never commit real passwords.
+const ADMIN_PASSWORD = process.env.E2E_ADMIN_PASSWORD ?? '';
+const SALES_PASSWORD = process.env.E2E_SALES_PASSWORD ?? '';
+const MANAGER_PASSWORD = process.env.E2E_MANAGER_PASSWORD ?? '';
+const TEAM_LEAD_PASSWORD = process.env.E2E_TEAM_LEAD_PASSWORD ?? '';
+
+
 test.describe('Alpha Pro MENA CRM — E2E Core Workflows', () => {
 
   // Workflow 1: Admin Login -> Lead Pool -> Lead Distribution -> Sales Verification
@@ -7,7 +14,7 @@ test.describe('Alpha Pro MENA CRM — E2E Core Workflows', () => {
     // 1. Admin Login
     await page.goto('/login');
     await page.fill('input[type="email"]', 'admin@alphapro.com');
-    await page.fill('input[type="password"]', 'Admin123!');
+    await page.fill('input[type="password"]', ADMIN_PASSWORD);
     await page.click('button[type="submit"]');
 
     await expect(page).toHaveURL('/dashboard');
@@ -30,7 +37,7 @@ test.describe('Alpha Pro MENA CRM — E2E Core Workflows', () => {
 
     // 5. Sales User Login
     await page.fill('input[type="email"]', 'saleh@alphapro.com');
-    await page.fill('input[type="password"]', 'Sales123!');
+    await page.fill('input[type="password"]', SALES_PASSWORD);
     await page.click('button[type="submit"]');
 
     await expect(page).toHaveURL('/dashboard');
@@ -41,7 +48,7 @@ test.describe('Alpha Pro MENA CRM — E2E Core Workflows', () => {
   test('Workflow 2: Record No Answer Call Outcome & Check Queue', async ({ page }) => {
     await page.goto('/login');
     await page.fill('input[type="email"]', 'saleh@alphapro.com');
-    await page.fill('input[type="password"]', 'Sales123!');
+    await page.fill('input[type="password"]', SALES_PASSWORD);
     await page.click('button[type="submit"]');
 
     // Open Contacts
@@ -66,7 +73,7 @@ test.describe('Alpha Pro MENA CRM — E2E Core Workflows', () => {
   test('Workflow 3: Record Email Requested -> Complete Task -> Check Follow-up', async ({ page }) => {
     await page.goto('/login');
     await page.fill('input[type="email"]', 'saleh@alphapro.com');
-    await page.fill('input[type="password"]', 'Sales123!');
+    await page.fill('input[type="password"]', SALES_PASSWORD);
     await page.click('button[type="submit"]');
 
     await page.goto('/contacts');
@@ -84,7 +91,7 @@ test.describe('Alpha Pro MENA CRM — E2E Core Workflows', () => {
   test('Workflow 4: Call Later Outcome with Scheduled Time', async ({ page }) => {
     await page.goto('/login');
     await page.fill('input[type="email"]', 'saleh@alphapro.com');
-    await page.fill('input[type="password"]', 'Sales123!');
+    await page.fill('input[type="password"]', SALES_PASSWORD);
     await page.click('button[type="submit"]');
 
     await page.goto('/contacts');
@@ -105,7 +112,7 @@ test.describe('Alpha Pro MENA CRM — E2E Core Workflows', () => {
   test('Workflow 5: Manager Login & User Performance Reports', async ({ page }) => {
     await page.goto('/login');
     await page.fill('input[type="email"]', 'manager@alphapro.com');
-    await page.fill('input[type="password"]', 'Manager123!');
+    await page.fill('input[type="password"]', MANAGER_PASSWORD);
     await page.click('button[type="submit"]');
 
     await page.goto('/reports');
@@ -117,7 +124,7 @@ test.describe('Alpha Pro MENA CRM — E2E Core Workflows', () => {
   test('Workflow 6: Sales User Unauthorized Admin Access Rejection', async ({ page }) => {
     await page.goto('/login');
     await page.fill('input[type="email"]', 'saleh@alphapro.com');
-    await page.fill('input[type="password"]', 'Sales123!');
+    await page.fill('input[type="password"]', SALES_PASSWORD);
     await page.click('button[type="submit"]');
 
     // Direct API verification via browser fetch

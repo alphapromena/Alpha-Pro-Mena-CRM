@@ -63,3 +63,7 @@ desktop.ini
 .vscode/
 .idea/
 *.swp
+
+# ── Local DB backups / alembic scratch ──────────────────────────────────────
+backend/backups/
+api/__pycache__/

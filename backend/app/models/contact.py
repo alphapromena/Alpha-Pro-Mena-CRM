@@ -173,8 +173,6 @@ class Contact(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
         return self.first_name
 
     __table_args__ = (
-        Index("idx_contacts_normalized_email", "normalized_email"),
-        Index("idx_contacts_normalized_phone", "normalized_phone"),
         Index("idx_contacts_owner_status", "owner_id", "status"),
         Index("idx_contacts_country_industry", "country", "industry"),
     )

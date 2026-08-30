@@ -21,6 +21,7 @@ from app.auth.schemas import (
 )
 from app.auth.service import AuthService
 from app.config import get_settings
+from app.core.ratelimit import limiter
 from app.database import get_db
 from app.models.user import User
 
@@ -38,6 +39,7 @@ COOKIE_KWARGS = {
 
 
 @router.post("/login", response_model=TokenResponse)
+@limiter.limit(settings.rate_limit_login)
 async def login(
     request: Request,
     response: Response,

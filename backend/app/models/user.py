@@ -46,8 +46,12 @@ class Team(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
 
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # use_alter marks the users<->teams cycle as intentional so create/drop ordering
+    # and Alembic autogenerate handle it (FK is added after both tables exist).
     manager_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+        Uuid,
+        ForeignKey("users.id", ondelete="SET NULL", use_alter=True, name="fk_teams_manager_id_users"),
+        nullable=True,
     )
 
     # Relationships

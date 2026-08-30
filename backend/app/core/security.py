@@ -4,6 +4,7 @@ Never expose these internals beyond this module.
 """
 import secrets
 import uuid
+from functools import lru_cache
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -25,6 +26,16 @@ def hash_password(plain_password: str) -> str:
     pwd_bytes = plain_password.encode("utf-8")
     salt = bcrypt.gensalt(rounds=12)
     return bcrypt.hashpw(pwd_bytes, salt).decode("utf-8")
+
+
+@lru_cache(maxsize=1)
+def dummy_password_hash() -> str:
+    """
+    A genuine bcrypt hash of a random secret. Verified against when a login targets an
+    unknown email so the request costs the same time as a real password check
+    (prevents user enumeration through response timing).
+    """
+    return hash_password(secrets.token_urlsafe(32))
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:

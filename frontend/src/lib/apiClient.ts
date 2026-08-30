@@ -1,8 +1,17 @@
 /**
- * API client with fetch wrapper, automatic credentials (cookies), and unified error handling.
+ * API client with fetch wrapper, automatic credentials (cookies), silent token refresh,
+ * and unified error handling.
+ *
+ * Auth model: the backend sets an HttpOnly `access_token` cookie (15 min) and a
+ * `refresh_token` cookie (7 days). When a request comes back 401 we call
+ * POST /auth/refresh once (de-duplicated across concurrent requests) and retry.
+ * If the refresh fails the session is over and `auth:expired` is dispatched.
  */
 
 const API_BASE = '/api/v1';
+
+// Endpoints that must never trigger a refresh attempt
+const NO_REFRESH = ['/auth/login', '/auth/refresh', '/auth/logout'];
 
 export class ApiError extends Error {
   code: string;
@@ -18,9 +27,28 @@ export class ApiError extends Error {
   }
 }
 
+let refreshInFlight: Promise<boolean> | null = null;
+
+/** Try to mint a new access token from the refresh cookie. Shared across callers. */
+function refreshSession(): Promise<boolean> {
+  if (!refreshInFlight) {
+    refreshInFlight = fetch(`${API_BASE}/auth/refresh`, {
+      method: 'POST',
+      credentials: 'include',
+    })
+      .then((r) => r.ok)
+      .catch(() => false)
+      .finally(() => {
+        refreshInFlight = null;
+      });
+  }
+  return refreshInFlight;
+}
+
 export async function apiRequest<T = any>(
   endpoint: string,
-  options: RequestInit = {}
+  options: RequestInit = {},
+  isRetry = false
 ): Promise<T> {
   const url = endpoint.startsWith('http') ? endpoint : `${API_BASE}${endpoint}`;
 
@@ -37,6 +65,13 @@ export async function apiRequest<T = any>(
 
   const response = await fetch(url, config);
 
+  if (response.status === 401 && !isRetry && !NO_REFRESH.some((p) => endpoint.includes(p))) {
+    if (await refreshSession()) {
+      return apiRequest<T>(endpoint, options, true);
+    }
+    window.dispatchEvent(new CustomEvent('auth:expired'));
+  }
+
   if (response.status === 204) {
     return {} as T;
   }
@@ -47,12 +82,6 @@ export async function apiRequest<T = any>(
     const errData = data.error || {};
     const message = errData.message || response.statusText || 'An error occurred';
     const code = errData.code || `HTTP_${response.status}`;
-
-    if (response.status === 401 && !endpoint.includes('/auth/login')) {
-      // Auto-trigger auth expiration redirect if needed
-      window.dispatchEvent(new CustomEvent('auth:expired'));
-    }
-
     throw new ApiError(message, code, response.status, errData.details || []);
   }
 

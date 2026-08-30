@@ -1,6 +1,7 @@
 @echo off
 title Alpha Pro MENA CRM - Starting...
 color 0A
+set "ROOT=%~dp0"
 
 echo.
 echo  =========================================
@@ -8,12 +9,12 @@ echo    Alpha Pro MENA CRM - Launching...
 echo  =========================================
 echo.
 echo  Starting Backend API...
-start "" "f:\New folder\start_backend.bat"
+start "" "%ROOT%start_backend.bat"
 
 timeout /t 4 /nobreak >nul
 
 echo  Starting Frontend...
-start "" "f:\New folder\start_frontend.bat"
+start "" "%ROOT%start_frontend.bat"
 
 timeout /t 5 /nobreak >nul
 

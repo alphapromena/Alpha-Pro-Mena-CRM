@@ -22,6 +22,14 @@ export const App: React.FC = () => {
     fetchMe();
   }, []);
 
+  // Session ended (refresh token expired/revoked): drop the user so the route guard
+  // sends them to /login instead of leaving a half-dead UI behind.
+  useEffect(() => {
+    const onExpired = () => useAuthStore.getState().setUser(null);
+    window.addEventListener('auth:expired', onExpired);
+    return () => window.removeEventListener('auth:expired', onExpired);
+  }, []);
+
   if (isLoading) {
     return <LoadingScreen message="Initializing Alpha Pro MENA CRM System..." />;
   }

@@ -35,52 +35,44 @@ A high-performance, enterprise-grade Customer Relationship Management (CRM) and 
 
 ## 🚀 Quick Start (Local Development)
 
-### 1. Backend Setup
+The quickest way on Windows is **`Start CRM.bat`** — it starts the API and the UI from wherever the folder lives.
+Manual steps:
+
+### 1. Backend
 
 ```bash
-# Navigate to backend
 cd backend
+python -m venv .venv
+.venv\Scripts\pip install -r requirements.txt -r requirements-dev.txt
+copy ..\.env.example .env        # set APP_SECRET_KEY and JWT_SECRET_KEY (32+ chars)
 
-# Create virtual environment
-python -m venv venv
-venv\Scripts\activate  # Windows
-# or: source venv/bin/activate  # macOS / Linux
+# First run only: creates the SQLite schema (backend/crm.db) and seed users,
+# printing their temporary passwords ONCE.
+.venv\Scripts\python -m app.seed
 
-# Install dependencies
-pip install -r requirements.txt -r requirements-dev.txt
-
-# Run migrations & seed data
-python -m app.seed
-
-# Start backend server
-uvicorn app.main:app --reload --port 8000
+.venv\Scripts\python -m uvicorn app.main:app --reload --port 8000
 ```
 
-### 2. Frontend Setup
+Local development uses SQLite by default; production uses PostgreSQL (see [Deployment](docs/deployment.md)).
+
+### 2. Frontend
 
 ```bash
-# Navigate to frontend
 cd frontend
-
-# Install npm dependencies
-npm install
-
-# Start Vite dev server
+npm ci
 npm run dev
 ```
 
-The frontend will be live at `http://localhost:5173`.
+The UI is at `http://localhost:5173`; API docs at `http://localhost:8000/api/docs` (when `APP_DEBUG=true`).
 
 ---
 
-## 🔐 Default Development Credentials
+## 🔐 Credentials
 
-| Role | Email | Password | Allowed Capabilities |
-| :--- | :--- | :--- | :--- |
-| **Admin** | `admin@alphapro.com` | `Admin123!` | Full System Control, Users, Teams, Distribution, Audit Logs |
-| **Manager** | `manager@alphapro.com` | `Manager123!` | Management Analytics, Performance Reports, Lead Reassignment |
-| **Team Leader**| `leader@alphapro.com` | `Leader123!` | Team Outreach View, Task Delegation |
-| **Sales Agent**| `saleh@alphapro.com` | `Sales123!` | My Work Daily Workstation, Assigned Leads, Call Logging |
+There are **no built-in passwords**. `python -m app.seed` generates a random temporary password for every
+account (or uses `ADMIN_PASSWORD` from `.env` for the admin) and prints them once. Rotate all passwords on an
+existing database with `python -m scripts.rotate_passwords --apply`. Users change their own password under
+Settings.
 
 ---
 
@@ -101,14 +93,12 @@ npx playwright test
 
 ---
 
-## 🐳 Docker Deployment
+## ☁️ Deployment
 
-```bash
-docker compose up -d --build
-```
-* **Frontend**: `http://localhost:5173`
-* **Backend API**: `http://localhost:8000`
-* **API Docs**: `http://localhost:8000/api/docs`
+* **Vercel** (recommended): static Vite frontend + FastAPI serverless function + hosted PostgreSQL, background
+  jobs via Vercel Cron. Full walkthrough, environment variables and data migration in
+  [docs/deployment.md](docs/deployment.md).
+* **Docker Compose**: `docker compose up -d --build` → UI `:5173`, API `:8000`, PostgreSQL `:5432`.
 
 ---
 
@@ -120,5 +110,5 @@ docker compose up -d --build
 * [Security Engineering & RBAC](docs/security.md)
 * [CRM Business Rules & Workflows](docs/crm-business-rules.md)
 * [Google Sheets Integration Guide](docs/google-sheets-integration.md)
-* [Deployment & Docker Guide](docs/deployment.md)
+* [Deployment Guide (Vercel / Docker / local)](docs/deployment.md)
 * [Testing & QA Strategy](docs/testing.md)

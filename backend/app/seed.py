@@ -1,9 +1,9 @@
-﻿"""
+"""
 Seed script for local development and testing.
 Seeds the 4 real Alpha Pro MENA user accounts (Saleh, Hassan, Amin, Ghaida)
 plus system admin and team accounts. Automation rules and sample data included.
 
-Temporary passwords are printed to stdout ONCE at seed time â€” save them immediately.
+Temporary passwords are printed to stdout ONCE at seed time — save them immediately.
 """
 import asyncio
 import secrets
@@ -11,6 +11,7 @@ from datetime import datetime, timezone, timedelta
 import structlog
 from sqlalchemy import select
 
+from app.config import get_settings
 from app.database import AsyncSessionLocal, engine, Base
 from app.core.security import hash_password, normalize_email, normalize_phone
 from app.models.user import User, Team, UserRole
@@ -29,6 +30,7 @@ from app.models.automation import AutomationRule
 from app.models.integrations import GoogleSheetsSyncConfig, LeadDistributionRule
 
 logger = structlog.get_logger(__name__)
+settings = get_settings()
 
 
 async def seed_data():
@@ -53,18 +55,19 @@ async def seed_data():
         await db.flush()
 
         # 2. Users
-        # â”€â”€ System / Dev account (kept for development access)
+        # ── System / Dev account (kept for development access)
+        admin_password = settings.admin_password or secrets.token_urlsafe(12)
         dev_admin = User(
-            email="admin@alphapro.com",
-            normalized_email=normalize_email("admin@alphapro.com"),
-            first_name="Dev",
-            last_name="Admin",
-            password_hash=hash_password("Admin123!"),
+            email=settings.admin_email,
+            normalized_email=normalize_email(settings.admin_email),
+            first_name=settings.admin_first_name,
+            last_name=settings.admin_last_name,
+            password_hash=hash_password(admin_password),
             role=UserRole.TEAM_LEAD,
             lead_capacity=1000,
         )
 
-        # â”€â”€ Real Team Lead
+        # ── Real Team Lead
         tmp_qusai = secrets.token_urlsafe(12)
         qusai = User(
             email="qusai@alphapromena.com",
@@ -76,19 +79,20 @@ async def seed_data():
             lead_capacity=1000,
         )
 
-        # â”€â”€ Real Manager placeholder (uses dev admin email pattern for now)
+        # ── Real Manager placeholder (uses dev admin email pattern for now)
+        tmp_manager = secrets.token_urlsafe(12)
         manager = User(
             email="manager@alphapro.com",
             normalized_email=normalize_email("manager@alphapro.com"),
             first_name="Nour",
             last_name="Haddad",
-            password_hash=hash_password("Manager123!"),
+            password_hash=hash_password(tmp_manager),
             role=UserRole.MANAGER,
             team_id=None,  # set after team flush
             lead_capacity=800,
         )
 
-        # â”€â”€ 4 Real Sales Users
+        # ── 4 Real Sales Users
         tmp_saleh = secrets.token_urlsafe(12)
         saleh = User(
             email="saleh@alphapromena.com",
@@ -147,17 +151,17 @@ async def seed_data():
         db.add_all([team_mena, team_saudi, team_gov, manager, saleh, hassan, amin, ghaida])
         await db.flush()
 
-        # Print temporary credentials to stdout (save these â€” they are not stored)
+        # Print temporary credentials to stdout (save these — they are not stored)
         logger.info("\n" + "="*60)
-        logger.info("SEED CREDENTIALS â€” SAVE THESE (shown once only)")
+        logger.info("SEED CREDENTIALS — SAVE THESE (shown once only)")
         logger.info("="*60)
         logger.info(f"  qusai@alphapromena.com   : {tmp_qusai}")
         logger.info(f"  saleh@alphapromena.com   : {tmp_saleh}")
         logger.info(f"  hassan@alphapromena.com  : {tmp_hassan}")
         logger.info(f"  amin@alphapromena.com    : {tmp_amin}")
         logger.info(f"  ghaida@alphapromena.com  : {tmp_ghaida}")
-        logger.info(f"  admin@alphapro.com       : Admin123! (dev only)")
-        logger.info(f"  manager@alphapro.com     : Manager123! (dev only)")
+        logger.info(f"  {settings.admin_email:<25}: {admin_password}" + ("" if settings.admin_password else " (generated)"))
+        logger.info(f"  manager@alphapro.com     : {tmp_manager} (generated)")
         logger.info("="*60 + "\n")
 
         # 3. Default Automation Rules
@@ -379,13 +383,13 @@ async def seed_data():
         db.add(demo1)
 
         opp1 = Opportunity(
-            title="Al Rajhi Capital â€” Enterprise CRM Implementation",
+            title="Al Rajhi Capital — Enterprise CRM Implementation",
             contact_id=c1.id, company_id=comp_alrajhi.id, owner_id=saleh.id,
             value=45000.0, stage=OpportunityStage.QUALIFIED, probability=60,
             expected_close_at=now + timedelta(days=45),
         )
         opp2 = Opportunity(
-            title="Emirates NBD â€” Sales Outreach Management Platform",
+            title="Emirates NBD — Sales Outreach Management Platform",
             contact_id=c3.id, company_id=comp_enbd.id, owner_id=amin.id,
             value=65000.0, stage=OpportunityStage.DEMO, probability=50,
             expected_close_at=now + timedelta(days=60),

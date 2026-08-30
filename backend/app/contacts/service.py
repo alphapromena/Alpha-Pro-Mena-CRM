@@ -94,9 +94,8 @@ class ContactService:
 
     def _can_view_contact(self, contact: Contact, user: User) -> bool:
         """Service-layer authorization check."""
+        # MANAGER / TEAM_LEAD see everything; USER only their own leads.
         if user.is_manager_or_above:
-            return True
-        if user.is_team_leader_or_above and contact.team_id and str(contact.team_id) == str(user.team_id):
             return True
         if contact.owner_id and str(contact.owner_id) == str(user.id):
             return True
@@ -136,14 +135,9 @@ class ContactService:
             selectinload(Contact.calls),
         )
 
-        # Row-level security — scope visible contacts by role
+        # Row-level security — MANAGER / TEAM_LEAD / DATA_OPS see everything; USER sees own leads
         if not user.is_manager_or_above and not user.is_data_ops:
-            if user.is_team_leader_or_above:
-                stmt = stmt.where(
-                    or_(Contact.owner_id == user.id, Contact.team_id == user.team_id)
-                )
-            else:
-                stmt = stmt.where(Contact.owner_id == user.id)
+            stmt = stmt.where(Contact.owner_id == user.id)
 
         # Filters
         if search:

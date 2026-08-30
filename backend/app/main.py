@@ -7,10 +7,14 @@ import structlog
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi.errors import RateLimitExceeded
+from sqlalchemy import text
 from starlette.exceptions import HTTPException
 
 from app.config import get_settings
+from app.core.exceptions import AppError
 from app.core.logging import configure_logging
+from app.core.ratelimit import limiter, rate_limit_handler
 from app.middleware.error_handler import (
     app_error_handler,
     generic_error_handler,
@@ -18,7 +22,6 @@ from app.middleware.error_handler import (
     validation_error_handler,
 )
 from app.middleware.logging import RequestContextMiddleware
-from app.core.exceptions import AppError
 
 # Import all routers
 from app.auth.router import router as auth_router
@@ -36,21 +39,21 @@ async def lifespan(app: FastAPI):
         app_name=settings.app_name,
         version=settings.app_version,
         environment=settings.app_env,
+        serverless=settings.is_serverless,
+        scheduler=settings.scheduler_enabled,
         google_sheets_enabled=settings.google_sheets_enabled,
     )
 
-    # Run automated role hierarchy migration & ensure primary Team Lead Qusai
-    from app.migrations import run_role_migrations
-    await run_role_migrations()
-
-    # Start background job scheduler
-    from app.jobs.scheduler import start_scheduler, stop_scheduler
-    await start_scheduler()
+    # In-process scheduler only on long-running servers; on Vercel, crons hit /api/v1/jobs/*
+    if settings.scheduler_enabled:
+        from app.jobs.scheduler import start_scheduler
+        await start_scheduler()
 
     yield
 
-    # Graceful shutdown
-    await stop_scheduler()
+    if settings.scheduler_enabled:
+        from app.jobs.scheduler import stop_scheduler
+        await stop_scheduler()
     logger.info("crm.shutdown")
 
 
@@ -64,6 +67,10 @@ def create_app() -> FastAPI:
         openapi_url="/api/openapi.json" if settings.app_debug else None,
         lifespan=lifespan,
     )
+
+    # ── Rate limiting ────────────────────────────────────────────────────────
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, rate_limit_handler)
 
     # ── CORS ─────────────────────────────────────────────────────────────────
     app.add_middleware(
@@ -87,14 +94,25 @@ def create_app() -> FastAPI:
     # ── Routers ──────────────────────────────────────────────────────────────
     prefix = "/api/v1"
     app.include_router(auth_router, prefix=prefix)
-
-    # Import and register remaining routers
     _register_routers(app, prefix)
 
     # ── Health Check ─────────────────────────────────────────────────────────
     @app.get("/api/health", tags=["Health"])
     async def health():
-        return {"status": "ok", "version": settings.app_version}
+        from app.database import engine
+
+        db_status = "ok"
+        try:
+            async with engine.connect() as conn:
+                await conn.execute(text("SELECT 1"))
+        except Exception as exc:  # report, never crash the probe
+            logger.error("health.db_unreachable", error=str(exc))
+            db_status = "unreachable"
+        return {
+            "status": "ok" if db_status == "ok" else "degraded",
+            "version": settings.app_version,
+            "database": db_status,
+        }
 
     return app
 
@@ -120,13 +138,14 @@ def _register_routers(app: FastAPI, prefix: str) -> None:
     from app.reports.router import router as reports_router
     from app.admin.router import router as admin_router
     from app.integrations.google_sheets.router import router as sheets_router
+    from app.jobs.router import router as jobs_router
 
     for router in [
         users_router, teams_router, contacts_router, companies_router,
         calls_router, tasks_router, follow_ups_router, recalls_router,
         no_answer_router, demos_router, opportunities_router, campaigns_router,
         notifications_router, audit_router, automation_router, search_router,
-        reports_router, admin_router, sheets_router,
+        reports_router, admin_router, sheets_router, jobs_router,
     ]:
         app.include_router(router, prefix=prefix)
 
