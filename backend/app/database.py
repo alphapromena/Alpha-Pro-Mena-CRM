@@ -80,8 +80,10 @@ class Base(DeclarativeBase):
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     """FastAPI dependency — yields an async DB session."""
+    from app.core.auto_migrate import auto_migrate_if_needed
     async with AsyncSessionLocal() as session:
         try:
+            await auto_migrate_if_needed(session)
             yield session
             await session.commit()
         except Exception:
@@ -92,8 +94,10 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 @asynccontextmanager
 async def get_db_context() -> AsyncGenerator[AsyncSession, None]:
     """Context manager for use outside request context (jobs, scripts)."""
+    from app.core.auto_migrate import auto_migrate_if_needed
     async with AsyncSessionLocal() as session:
         try:
+            await auto_migrate_if_needed(session)
             yield session
             await session.commit()
         except Exception:

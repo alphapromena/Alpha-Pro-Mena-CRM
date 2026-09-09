@@ -77,6 +77,7 @@ async def generic_error_handler(request: Request, exc: Exception) -> JSONRespons
         "unhandled_exception",
         path=request.url.path,
         exc_type=type(exc).__name__,
+        error=str(exc),
     )
     return error_response(
         status_code=500,

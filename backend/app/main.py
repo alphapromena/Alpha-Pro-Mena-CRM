@@ -44,6 +44,15 @@ async def lifespan(app: FastAPI):
         google_sheets_enabled=settings.google_sheets_enabled,
     )
 
+    # Auto-migrate schema and bootstrap team accounts if needed
+    try:
+        from app.database import AsyncSessionLocal
+        from app.core.auto_migrate import auto_migrate_if_needed
+        async with AsyncSessionLocal() as session:
+            await auto_migrate_if_needed(session)
+    except Exception as exc:
+        logger.error("crm.startup.migrate_error", error=str(exc))
+
     # In-process scheduler only on long-running servers; on Vercel, crons hit /api/v1/jobs/*
     if settings.scheduler_enabled:
         from app.jobs.scheduler import start_scheduler
