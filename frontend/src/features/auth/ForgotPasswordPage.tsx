@@ -11,20 +11,48 @@ export const ForgotPasswordPage: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState(false);
+  const [cooldown, setCooldown] = useState(0);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  // Cooldown countdown timer
+  React.useEffect(() => {
+    if (cooldown <= 0) return;
+    const timer = setInterval(() => {
+      setCooldown((prev) => prev - 1);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [cooldown]);
+
+  const handleSubmit = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (cooldown > 0) return;
+
     setError(null);
     setIsLoading(true);
 
     try {
       await api.post('/auth/forgot-password', { email: email.trim() });
       setSubmitted(true);
+      setCooldown(60);
     } catch (err: any) {
       if (err instanceof ApiError) {
-        setError(err.message);
+        if (err.status === 429) {
+          setError(err.message || (isRTL ? 'يرجى الانتظار قبل إعادة المحاولة.' : 'Please wait before requesting another reset email.'));
+          setCooldown(60);
+        } else if (err.status >= 500) {
+          setError(
+            isRTL
+              ? 'خدمة استعادة كلمة المرور غير متاحة مؤقتاً. يرجى مراجعة مسؤول النظام.'
+              : 'Password reset service is temporarily unavailable. Please contact IT support.'
+          );
+        } else {
+          setError(err.message);
+        }
       } else {
-        setError(isRTL ? 'فشل إرسال طلب الاستعادة.' : 'Failed to request password reset.');
+        setError(
+          isRTL
+            ? 'تعذر الاتصال بالخادم. يرجى التحقق من اتصال الإنترنت والمحاولة لاحقاً.'
+            : 'Unable to reach the server. Please check your connection and retry.'
+        );
       }
     } finally {
       setIsLoading(false);
@@ -115,8 +143,21 @@ export const ForgotPasswordPage: React.FC = () => {
                 ? 'إذا كان هذا البريد مسجلاً في النظام، ستصلك رسالة تحتوي على رابط الاستعادة.'
                 : 'If an active account exists for this address, a reset link has been dispatched.'}
             </p>
-            <div style={{ marginTop: 'var(--space-6)' }}>
-              <Link to="/login" className="btn btn-secondary btn-sm">
+
+            <div style={{ marginTop: 'var(--space-6)', display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+              <button
+                type="button"
+                disabled={isLoading || cooldown > 0}
+                onClick={() => handleSubmit()}
+                className="btn btn-secondary btn-sm"
+                style={{ width: '100%' }}
+              >
+                {cooldown > 0
+                  ? (isRTL ? `إعادة الإرسال بعد (${cooldown} ث)` : `Resend link (${cooldown}s)`)
+                  : (isRTL ? 'إعادة إرسال الرابط' : 'Resend Reset Link')}
+              </button>
+
+              <Link to="/login" className="btn btn-primary btn-sm" style={{ width: '100%' }}>
                 <ArrowLeft size={14} />
                 <span>{isRTL ? 'العودة لتسجيل الدخول' : 'Return to Login'}</span>
               </Link>
@@ -142,7 +183,7 @@ export const ForgotPasswordPage: React.FC = () => {
 
             <button
               type="submit"
-              disabled={isLoading || !email.trim()}
+              disabled={isLoading || !email.trim() || cooldown > 0}
               className="btn btn-accent"
               style={{
                 width: '100%',
@@ -151,7 +192,11 @@ export const ForgotPasswordPage: React.FC = () => {
                 marginTop: 'var(--space-2)',
               }}
             >
-              {isLoading ? (isRTL ? 'جاري الإرسال...' : 'Sending Link...') : (isRTL ? 'إرسال رابط الاستعادة' : 'Send Reset Link')}
+              {isLoading
+                ? (isRTL ? 'جاري الإرسال...' : 'Sending Link...')
+                : cooldown > 0
+                ? (isRTL ? `انتظر (${cooldown} ث)` : `Wait (${cooldown}s)`)
+                : (isRTL ? 'إرسال رابط الاستعادة' : 'Send Reset Link')}
             </button>
 
             <div style={{ textAlign: 'center', marginTop: 'var(--space-2)' }}>

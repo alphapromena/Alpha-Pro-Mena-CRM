@@ -37,6 +37,10 @@ export const ResetPasswordPage: React.FC = () => {
       setError(isRTL ? 'رمز الاستعادة مفقود أو غير صالح.' : 'Reset token is required.');
       return;
     }
+    if (newPassword.trim() === '123456789') {
+      setError(isRTL ? 'لا يمكن استخدام كلمة المرور الافتراضية.' : 'New password cannot be the bootstrap password.');
+      return;
+    }
     if (!isPolicyValid) {
       setError(isRTL ? 'يرجى استيفاء جميع معايير كلمة المرور وتطابق التأكيد.' : 'Please satisfy all password strength criteria.');
       return;

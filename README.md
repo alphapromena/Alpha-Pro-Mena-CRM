@@ -54,6 +54,10 @@ copy ..\.env.example .env        # configure secrets & company email domain
 # with temporary activation credentials and must_change_password=True.
 .venv\Scripts\python -m app.seed
 
+# Optional: To safely update/bootstrap all 7 team accounts with the temporary password
+# and force must_change_password=True without touching any existing data:
+.venv\Scripts\python scripts/bootstrap_team_passwords.py
+
 # Start the API server
 .venv\Scripts\python -m uvicorn app.main:app --reload --port 8000
 ```

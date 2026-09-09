@@ -79,6 +79,8 @@ class ActivatePasswordRequest(BaseModel):
     @field_validator("new_password")
     @classmethod
     def password_strength(cls, v: str) -> str:
+        if v.strip() == "123456789":
+            raise ValueError("New password cannot be the temporary bootstrap password.")
         if len(v) < 8:
             raise ValueError("Password must be at least 8 characters.")
         if not re.search(r"[a-z]", v):
@@ -110,6 +112,8 @@ class ResetPasswordRequest(BaseModel):
     @field_validator("new_password")
     @classmethod
     def password_strength(cls, v: str) -> str:
+        if v.strip() == "123456789":
+            raise ValueError("New password cannot be the temporary bootstrap password.")
         if len(v) < 8:
             raise ValueError("Password must be at least 8 characters.")
         if not re.search(r"[a-z]", v):

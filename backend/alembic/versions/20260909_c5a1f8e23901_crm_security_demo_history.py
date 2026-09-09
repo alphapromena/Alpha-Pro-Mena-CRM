@@ -21,8 +21,8 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     # ── 1. Users table security & verification additions ───────────────
     with op.batch_alter_table('users', schema=None) as batch_op:
-        batch_op.add_column(sa.Column('must_change_password', sa.Boolean(), server_default=sa.text('0'), nullable=False))
-        batch_op.add_column(sa.Column('email_verified', sa.Boolean(), server_default=sa.text('0'), nullable=False))
+        batch_op.add_column(sa.Column('must_change_password', sa.Boolean(), server_default=sa.false(), nullable=False))
+        batch_op.add_column(sa.Column('email_verified', sa.Boolean(), server_default=sa.false(), nullable=False))
         batch_op.add_column(sa.Column('verification_token_hash', sa.String(length=255), nullable=True))
         batch_op.add_column(sa.Column('verification_token_expires_at', sa.DateTime(timezone=True), nullable=True))
         batch_op.add_column(sa.Column('verification_sent_at', sa.DateTime(timezone=True), nullable=True))
@@ -43,7 +43,7 @@ def upgrade() -> None:
         batch_op.add_column(sa.Column('next_step', sa.Text(), nullable=True))
         batch_op.add_column(sa.Column('next_step_due_date', sa.DateTime(timezone=True), nullable=True))
         batch_op.add_column(sa.Column('report_status', sa.String(length=30), server_default=sa.text("'NEEDS_REPORT'"), nullable=False))
-        batch_op.add_column(sa.Column('is_historical', sa.Boolean(), server_default=sa.text('0'), nullable=False))
+        batch_op.add_column(sa.Column('is_historical', sa.Boolean(), server_default=sa.false(), nullable=False))
         batch_op.add_column(sa.Column('historical_source', sa.String(length=255), nullable=True))
         batch_op.add_column(sa.Column('historical_date', sa.DateTime(timezone=True), nullable=True))
         batch_op.add_column(sa.Column('created_by_id', sa.Uuid(), nullable=True))
