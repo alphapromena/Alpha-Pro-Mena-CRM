@@ -24,13 +24,23 @@ import { AutomationRulesPage } from './features/admin/AutomationRulesPage';
 import { AuditLogsPage } from './features/admin/AuditLogsPage';
 import { SystemSettingsPage } from './features/admin/SystemSettingsPage';
 import { LeadPoolPage } from './features/leads/LeadPoolPage';
+import { VerifyEmailPage } from './features/auth/VerifyEmailPage';
+import { SetPasswordPage } from './features/auth/SetPasswordPage';
+import { ForgotPasswordPage } from './features/auth/ForgotPasswordPage';
+import { ResetPasswordPage } from './features/auth/ResetPasswordPage';
 import { useAuthStore } from './store/authStore';
 
 // Protected Route Guard
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { isAuthenticated, isLoading } = useAuthStore();
+  const { isAuthenticated, isLoading, user } = useAuthStore();
   if (isLoading) return null;
   if (!isAuthenticated) return <Navigate to="/login" replace />;
+  if (user?.must_change_password) {
+    return <Navigate to="/set-password" replace />;
+  }
+  if (user?.email_verified === false) {
+    return <Navigate to="/verify-email" replace />;
+  }
   return <>{children}</>;
 };
 
@@ -46,6 +56,12 @@ const DataOpsRestrictedRoute: React.FC<{ children: React.ReactNode }> = ({ child
 // Dynamic Home Index Redirect
 const IndexRedirect: React.FC = () => {
   const { user } = useAuthStore();
+  if (user?.must_change_password) {
+    return <Navigate to="/set-password" replace />;
+  }
+  if (user?.email_verified === false) {
+    return <Navigate to="/verify-email" replace />;
+  }
   if (user?.role === 'DATA_OPS') {
     return <Navigate to="/leads/pool" replace />;
   }
@@ -56,6 +72,22 @@ export const router = createBrowserRouter([
   {
     path: '/login',
     element: <LoginPage />,
+  },
+  {
+    path: '/verify-email',
+    element: <VerifyEmailPage />,
+  },
+  {
+    path: '/set-password',
+    element: <SetPasswordPage />,
+  },
+  {
+    path: '/forgot-password',
+    element: <ForgotPasswordPage />,
+  },
+  {
+    path: '/reset-password',
+    element: <ResetPasswordPage />,
   },
   {
     path: '/',

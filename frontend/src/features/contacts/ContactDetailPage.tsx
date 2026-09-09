@@ -22,6 +22,10 @@ import {
   Archive,
   ArchiveRestore,
   Tag,
+  Edit2,
+  Presentation,
+  Sparkles,
+  History,
 } from 'lucide-react';
 
 export const ContactDetailPage: React.FC = () => {
@@ -53,6 +57,115 @@ export const ContactDetailPage: React.FC = () => {
   const [finalOutcomeChoice, setFinalOutcomeChoice] = useState('Not Interested');
   const [finalOutcomeNotes, setFinalOutcomeNotes] = useState('');
   const [isSubmittingFinalOutcome, setIsSubmittingFinalOutcome] = useState(false);
+
+  // Edit Contact Profile Modal State
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [usersList, setUsersList] = useState<any[]>([]);
+  const [editForm, setEditForm] = useState({
+    first_name: '',
+    last_name: '',
+    position: '',
+    company_name: '',
+    email: '',
+    phone: '',
+    secondary_phone: '',
+    country: '',
+    industry: '',
+    owner_id: '',
+    status: '',
+    notes: '',
+    source: '',
+  });
+  const [initialEditForm, setInitialEditForm] = useState<any>(null);
+  const [editError, setEditError] = useState<string | null>(null);
+  const [isSavingContact, setIsSavingContact] = useState(false);
+
+  // Fetch Users for Owner assignment
+  useEffect(() => {
+    const fetchUsers = async () => {
+      try {
+        const res = await api.get<any>('/users');
+        setUsersList(res.data || []);
+      } catch (e) {
+        console.error('Failed to load users list', e);
+      }
+    };
+    fetchUsers();
+  }, []);
+
+  const handleOpenEditModal = () => {
+    if (!contact) return;
+    const formState = {
+      first_name: contact.first_name || '',
+      last_name: contact.last_name || '',
+      position: contact.position || '',
+      company_name: contact.company_name || '',
+      email: contact.email || '',
+      phone: contact.phone || '',
+      secondary_phone: (contact as any).secondary_phone || '',
+      country: contact.country || '',
+      industry: contact.industry || '',
+      owner_id: contact.owner_id || '',
+      status: contact.status || 'NEW',
+      notes: contact.notes || '',
+      source: contact.source || '',
+    };
+    setEditForm(formState);
+    setInitialEditForm(formState);
+    setEditError(null);
+    setShowEditModal(true);
+  };
+
+  const handleCancelEdit = () => {
+    if (initialEditForm && JSON.stringify(editForm) !== JSON.stringify(initialEditForm)) {
+      const confirmDiscard = window.confirm(
+        'You have unsaved changes to this contact profile. Are you sure you want to discard them?'
+      );
+      if (!confirmDiscard) return;
+    }
+    setShowEditModal(false);
+    setEditError(null);
+  };
+
+  const handleSaveContact = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!contact) return;
+    if (!editForm.first_name.trim()) {
+      setEditError('First name is required.');
+      return;
+    }
+    if (editForm.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(editForm.email.trim())) {
+      setEditError('Please provide a valid email address (e.g. name@domain.com).');
+      return;
+    }
+
+    setEditError(null);
+    setIsSavingContact(true);
+    try {
+      await api.patch(`/contacts/${contact.id}`, {
+        first_name: editForm.first_name.trim(),
+        last_name: editForm.last_name.trim() || undefined,
+        position: editForm.position.trim() || undefined,
+        company_name: editForm.company_name.trim() || undefined,
+        email: editForm.email.trim() || undefined,
+        phone: editForm.phone.trim() || undefined,
+        secondary_phone: editForm.secondary_phone.trim() || undefined,
+        country: editForm.country.trim() || undefined,
+        industry: editForm.industry.trim() || undefined,
+        owner_id: editForm.owner_id || undefined,
+        status: editForm.status || undefined,
+        notes: editForm.notes.trim() || undefined,
+        source: editForm.source.trim() || undefined,
+      });
+
+      setShowEditModal(false);
+      await loadContact();
+    } catch (err: any) {
+      setEditError(err.message || 'Failed to update contact profile.');
+    } finally {
+      setIsSavingContact(false);
+    }
+  };
 
   // Helper for attempt ordinal (1st, 2nd, 3rd, 4th, 5th, ...)
   const formatAttemptOrdinal = (n: number) => {
@@ -250,6 +363,14 @@ export const ContactDetailPage: React.FC = () => {
         </button>
 
         <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
+          <button
+            onClick={handleOpenEditModal}
+            className="btn btn-secondary btn-md"
+            style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+          >
+            <Edit2 size={15} />
+            <span>Edit Contact</span>
+          </button>
           {!contact.is_dnc && contact.status !== 'ARCHIVED' && !contact.archived_at && (
             <>
               <button
@@ -607,12 +728,20 @@ export const ContactDetailPage: React.FC = () => {
                           ? 'var(--color-primary-subtle)'
                           : item.type === 'status_change'
                           ? 'var(--neutral-100)'
+                          : item.type === 'audit'
+                          ? 'rgba(255, 30, 87, 0.12)'
+                          : item.type === 'demo'
+                          ? 'rgba(212, 175, 55, 0.15)'
                           : 'var(--color-success-bg)',
                       color:
                         item.type === 'call'
                           ? 'var(--color-accent)'
                           : item.type === 'status_change'
                           ? 'var(--neutral-700)'
+                          : item.type === 'audit'
+                          ? '#FF1E57'
+                          : item.type === 'demo'
+                          ? '#B8860B'
                           : 'var(--color-success)',
                       display: 'flex',
                       alignItems: 'center',
@@ -624,6 +753,8 @@ export const ContactDetailPage: React.FC = () => {
                     {item.type === 'note' && <FileText size={16} />}
                     {item.type === 'task' && <CheckCircle2 size={16} />}
                     {item.type === 'status_change' && <Clock size={16} />}
+                    {item.type === 'audit' && <Edit2 size={16} />}
+                    {item.type === 'demo' && <Presentation size={16} />}
                   </div>
 
                   {/* Content */}
@@ -634,6 +765,8 @@ export const ContactDetailPage: React.FC = () => {
                         {item.type === 'note' && 'Internal Note Added'}
                         {item.type === 'task' && `Task: ${item.title}`}
                         {item.type === 'status_change' && `Status updated to ${item.new_status}`}
+                        {item.type === 'audit' && (item.action === 'contact.email_corrected' ? 'Email Address Corrected' : item.action === 'contact.phone_corrected' ? 'Phone Number Corrected' : 'Contact Profile Edited')}
+                        {item.type === 'demo' && `Product Demo: ${item.status || item.stage || 'Completed'}`}
                       </span>
                       <span className="text-xs text-muted">
                         {new Date(item.timestamp).toLocaleString([], {
@@ -661,6 +794,36 @@ export const ContactDetailPage: React.FC = () => {
                         }}
                       >
                         "{item.notes}"
+                      </div>
+                    )}
+
+                    {/* Audit Diff Details */}
+                    {item.type === 'audit' && (item.old_value || item.new_value) && (
+                      <div
+                        style={{
+                          marginTop: 'var(--space-2)',
+                          padding: 'var(--space-2) var(--space-3)',
+                          backgroundColor: 'var(--bg-subtle)',
+                          borderRadius: 'var(--radius-md)',
+                          fontSize: '11px',
+                          border: '1px solid var(--border-light)',
+                        }}
+                      >
+                        <div className="font-semibold text-muted" style={{ marginBottom: '4px' }}>
+                          Changed Fields:
+                        </div>
+                        {Object.keys(item.new_value || {}).map((k) => (
+                          <div key={k} style={{ display: 'flex', gap: '6px', alignItems: 'center', marginBottom: '2px' }}>
+                            <span style={{ fontWeight: 600, color: 'var(--neutral-700)' }}>{k.replace('_', ' ')}:</span>
+                            <span style={{ textDecoration: 'line-through', color: 'var(--color-danger)' }}>
+                              {String(item.old_value?.[k] ?? 'empty')}
+                            </span>
+                            <span>→</span>
+                            <span style={{ fontWeight: 600, color: 'var(--color-success)' }}>
+                              {String(item.new_value?.[k] ?? 'empty')}
+                            </span>
+                          </div>
+                        ))}
                       </div>
                     )}
                   </div>
@@ -850,6 +1013,223 @@ export const ContactDetailPage: React.FC = () => {
               placeholder="Record important internal intelligence or instructions..."
               value={noteContent}
               onChange={(e) => setNoteContent(e.target.value)}
+            />
+          </div>
+        </form>
+      </Modal>
+
+      {/* ── Edit Contact Profile Modal ───────────────────────────────── */}
+      <Modal
+        isOpen={showEditModal}
+        onClose={handleCancelEdit}
+        title={`Edit Profile: ${contact.full_name}`}
+        footer={
+          <>
+            <button
+              type="button"
+              onClick={handleCancelEdit}
+              className="btn btn-secondary"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={isSavingContact}
+              onClick={handleSaveContact}
+              className="btn btn-accent"
+            >
+              {isSavingContact ? 'Saving Changes...' : 'Save Changes'}
+            </button>
+          </>
+        }
+      >
+        <form onSubmit={handleSaveContact} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+          {editError && (
+            <div
+              style={{
+                padding: 'var(--space-3)',
+                backgroundColor: '#fee2e2',
+                border: '1px solid #ef4444',
+                borderRadius: 'var(--radius-md)',
+                color: '#991b1b',
+                fontSize: '13px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+              }}
+            >
+              <AlertTriangle size={16} />
+              <span>{editError}</span>
+            </div>
+          )}
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-3)' }}>
+            <div className="form-group">
+              <label className="form-label font-semibold text-xs">First Name *</label>
+              <input
+                type="text"
+                required
+                className="form-input"
+                value={editForm.first_name}
+                onChange={(e) => setEditForm({ ...editForm, first_name: e.target.value })}
+              />
+            </div>
+            <div className="form-group">
+              <label className="form-label font-semibold text-xs">Last Name</label>
+              <input
+                type="text"
+                className="form-input"
+                value={editForm.last_name}
+                onChange={(e) => setEditForm({ ...editForm, last_name: e.target.value })}
+              />
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-3)' }}>
+            <div className="form-group">
+              <label className="form-label font-semibold text-xs">Job Title / Position</label>
+              <input
+                type="text"
+                className="form-input"
+                placeholder="e.g. Procurement Manager"
+                value={editForm.position}
+                onChange={(e) => setEditForm({ ...editForm, position: e.target.value })}
+              />
+            </div>
+            <div className="form-group">
+              <label className="form-label font-semibold text-xs">Company / Account Name</label>
+              <input
+                type="text"
+                className="form-input"
+                placeholder="e.g. Al-Futtaim Group"
+                value={editForm.company_name}
+                onChange={(e) => setEditForm({ ...editForm, company_name: e.target.value })}
+              />
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-3)' }}>
+            <div className="form-group">
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <label className="form-label font-semibold text-xs">Email Address</label>
+                <span className="text-xs text-muted" style={{ fontSize: '10px' }}>Support correction</span>
+              </div>
+              <input
+                type="email"
+                className="form-input"
+                placeholder="name@company.com"
+                value={editForm.email}
+                onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
+              />
+            </div>
+            <div className="form-group">
+              <label className="form-label font-semibold text-xs">Primary Phone</label>
+              <input
+                type="tel"
+                className="form-input font-mono"
+                placeholder="+966 50 000 0000"
+                value={editForm.phone}
+                onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })}
+              />
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-3)' }}>
+            <div className="form-group">
+              <label className="form-label font-semibold text-xs">Secondary Phone</label>
+              <input
+                type="tel"
+                className="form-input font-mono"
+                placeholder="+966 11 000 0000"
+                value={editForm.secondary_phone}
+                onChange={(e) => setEditForm({ ...editForm, secondary_phone: e.target.value })}
+              />
+            </div>
+            <div className="form-group">
+              <label className="form-label font-semibold text-xs">Lead Owner / Assignee</label>
+              <select
+                className="form-select"
+                value={editForm.owner_id}
+                onChange={(e) => setEditForm({ ...editForm, owner_id: e.target.value })}
+              >
+                <option value="">Unassigned</option>
+                {usersList.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.full_name} ({u.role})
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-3)' }}>
+            <div className="form-group">
+              <label className="form-label font-semibold text-xs">Country</label>
+              <input
+                type="text"
+                className="form-input"
+                placeholder="e.g. Saudi Arabia, UAE, Qatar"
+                value={editForm.country}
+                onChange={(e) => setEditForm({ ...editForm, country: e.target.value })}
+              />
+            </div>
+            <div className="form-group">
+              <label className="form-label font-semibold text-xs">Industry</label>
+              <input
+                type="text"
+                className="form-input"
+                placeholder="e.g. Construction, Logistics, Healthcare"
+                value={editForm.industry}
+                onChange={(e) => setEditForm({ ...editForm, industry: e.target.value })}
+              />
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-3)' }}>
+            <div className="form-group">
+              <label className="form-label font-semibold text-xs">Lifecycle Stage</label>
+              <select
+                className="form-select"
+                value={editForm.status}
+                onChange={(e) => setEditForm({ ...editForm, status: e.target.value })}
+              >
+                <option value="NEW">NEW (New Lead)</option>
+                <option value="CONTACTED">CONTACTED (In Conversation)</option>
+                <option value="IN_PROGRESS">IN PROGRESS</option>
+                <option value="INTERESTED">INTERESTED (High Intent)</option>
+                <option value="EMAIL_REQUESTED">EMAIL REQUESTED</option>
+                <option value="WHATSAPP_REQUESTED">WHATSAPP REQUESTED</option>
+                <option value="DEMO_SCHEDULED">DEMO SCHEDULED</option>
+                <option value="DEMO_DONE">DEMO DONE</option>
+                <option value="PROPOSAL_SENT">PROPOSAL SENT</option>
+                <option value="NEGOTIATION">NEGOTIATION</option>
+                <option value="WON">WON (Deal Closed)</option>
+                <option value="LOST">LOST</option>
+                <option value="NOT_INTERESTED">NOT INTERESTED</option>
+                <option value="DO_NOT_CONTACT">DO NOT CONTACT</option>
+                <option value="ARCHIVED">ARCHIVED</option>
+              </select>
+            </div>
+            <div className="form-group">
+              <label className="form-label font-semibold text-xs">Lead Source</label>
+              <input
+                type="text"
+                className="form-input"
+                placeholder="e.g. Outbound Campaign, Website, Referral"
+                value={editForm.source}
+                onChange={(e) => setEditForm({ ...editForm, source: e.target.value })}
+              />
+            </div>
+          </div>
+
+          <div className="form-group">
+            <label className="form-label font-semibold text-xs">Internal Notes & Remarks</label>
+            <textarea
+              className="form-textarea"
+              rows={3}
+              placeholder="Background context, communication preferences, specific requests..."
+              value={editForm.notes}
+              onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })}
             />
           </div>
         </form>

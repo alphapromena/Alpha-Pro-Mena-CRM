@@ -1,8 +1,10 @@
 """
-Auth router — login, logout, refresh, me, change-password.
-Rate limited on login endpoint.
+Auth router — login, logout, refresh, me, change-password, email verification,
+activation password set, and password reset.
+Rate limited on sensitive auth endpoints.
 """
 from datetime import timedelta
+from typing import Optional
 
 import structlog
 from fastapi import APIRouter, Depends, Request, Response
@@ -14,13 +16,21 @@ from app.auth.dependencies import (
     get_current_user,
 )
 from app.auth.schemas import (
+    ActivatePasswordRequest,
     ChangePasswordRequest,
+    ForgotPasswordRequest,
+    LanguageUpdateRequest,
     LoginRequest,
+    ResetPasswordRequest,
+    ResendVerificationRequest,
+    ThemeUpdateRequest,
     TokenResponse,
     UserMeResponse,
+    VerifyEmailRequest,
 )
 from app.auth.service import AuthService
 from app.config import get_settings
+from app.core.email import get_dev_mailbox
 from app.core.ratelimit import limiter
 from app.database import get_db
 from app.models.user import User
@@ -74,6 +84,8 @@ async def login(
     return TokenResponse(
         access_token=access_token,
         expires_in=settings.jwt_access_token_expire_minutes * 60,
+        must_change_password=getattr(user, "must_change_password", False),
+        email_verified=getattr(user, "email_verified", False),
     )
 
 
@@ -111,17 +123,9 @@ async def refresh_token(
     return TokenResponse(
         access_token=access_token,
         expires_in=settings.jwt_access_token_expire_minutes * 60,
+        must_change_password=getattr(user, "must_change_password", False),
+        email_verified=getattr(user, "email_verified", False),
     )
-
-
-from app.auth.schemas import (
-    ChangePasswordRequest,
-    LoginRequest,
-    TokenResponse,
-    UserMeResponse,
-    ThemeUpdateRequest,
-    LanguageUpdateRequest,
-)
 
 
 @router.get("/me", response_model=UserMeResponse)
@@ -141,6 +145,8 @@ async def get_me(current_user: User = Depends(get_current_user)):
         lead_capacity=current_user.lead_capacity,
         theme_preference=getattr(current_user, "theme_preference", "black_beige") or "black_beige",
         preferred_language=getattr(current_user, "preferred_language", "en") or "en",
+        must_change_password=getattr(current_user, "must_change_password", False),
+        email_verified=getattr(current_user, "email_verified", False),
     )
 
 
@@ -184,3 +190,96 @@ async def change_password(
         new_password=body.new_password,
     )
     return {"message": "Password changed successfully."}
+
+
+@router.post("/activate-password")
+async def activate_password(
+    body: ActivatePasswordRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Set personal password upon first activation/login."""
+    auth_service = AuthService(db)
+    await auth_service.activate_password(
+        user=current_user,
+        new_password=body.new_password,
+        current_password=body.current_password,
+    )
+    return {"message": "Personal password set successfully."}
+
+
+@router.post("/verify-email")
+async def verify_email(
+    body: VerifyEmailRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Verify email address with one-time expiring token."""
+    auth_service = AuthService(db)
+    user = await auth_service.verify_email(token=body.token, email=body.email)
+    return {
+        "message": "Email address verified successfully.",
+        "email_verified": True,
+        "email": user.email,
+    }
+
+
+@router.post("/resend-verification")
+@limiter.limit("3/minute")
+async def resend_verification(
+    request: Request,
+    body: ResendVerificationRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Resend email verification token (rate limited with cooldown)."""
+    auth_service = AuthService(db)
+    await auth_service.resend_verification(email=body.email)
+    return {
+        "message": "If an unverified account exists for this address, a verification link has been sent.",
+    }
+
+
+@router.post("/forgot-password")
+@limiter.limit("5/minute")
+async def forgot_password(
+    request: Request,
+    body: ForgotPasswordRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Initiate password reset via expiring email token."""
+    auth_service = AuthService(db)
+    await auth_service.request_password_reset(email=body.email)
+    return {
+        "message": "If an account matches this email, instructions to reset your password have been sent.",
+    }
+
+
+@router.post("/reset-password")
+@limiter.limit("5/minute")
+async def reset_password(
+    request: Request,
+    response: Response,
+    body: ResetPasswordRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Reset password using one-time token. Invalidates prior sessions."""
+    auth_service = AuthService(db)
+    user = await auth_service.reset_password_with_token(
+        token=body.token,
+        new_password=body.new_password,
+    )
+    # Clear any old cookies to force re-login
+    response.delete_cookie(ACCESS_TOKEN_COOKIE, path="/")
+    response.delete_cookie(REFRESH_TOKEN_COOKIE, path="/")
+    return {"message": "Password reset successfully. Please log in with your new password."}
+
+
+@router.get("/dev-mail")
+async def dev_mail(email: Optional[str] = None):
+    """Development-only endpoint to inspect generated mock verification and reset tokens."""
+    if settings.app_env not in ("development", "test") and not settings.app_debug:
+        return {"error": "Not available in production"}
+    msgs = get_dev_mailbox()
+    if email:
+        target = email.strip().lower()
+        msgs = [m for m in msgs if str(m.get("to", "")).strip().lower() == target]
+    return {"messages": msgs}

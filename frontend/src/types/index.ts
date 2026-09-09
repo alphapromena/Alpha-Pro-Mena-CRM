@@ -14,6 +14,8 @@ export interface User {
   team_id: string | null;
   team_name: string | null;
   is_active: boolean;
+  must_change_password?: boolean;
+  email_verified?: boolean;
   lead_capacity: number;
   theme_preference?: string;
 }
@@ -172,18 +174,49 @@ export interface NoAnswerItem {
   status: string;
 }
 
+export type DemoStatus =
+  | 'INTERESTED_NEXT_STEP'
+  | 'NOT_INTERESTED'
+  | 'CANCELLED'
+  | 'POSTPONED'
+  | 'PENDING';
+
+export type DemoReportStatus =
+  | 'REPORT_COMPLETE'
+  | 'NEEDS_REPORT';
+
 export interface DemoItem {
   id: string;
   contact_id: string;
   contact_name: string | null;
+  contact_phone?: string | null;
+  contact_email?: string | null;
   company_id: string | null;
+  company_name: string | null;
   owner_id: string | null;
-  stage: 'REQUESTED' | 'SCHEDULED' | 'COMPLETED' | 'CANCELLED' | 'NO_SHOW';
+  owner_name?: string | null;
+  stage: string;
+  status: DemoStatus | string;
   scheduled_at: string | null;
   completed_at: string | null;
-  notes: string | null;
+  cancelled_at?: string | null;
+  presenter?: string | null;
+  attendees?: string | null;
+  topics_covered?: string | null;
+  summary?: string | null;
   result: string | null;
+  reason?: string | null;
+  next_step?: string | null;
+  next_step_due_date?: string | null;
+  notes: string | null;
+  report_status: DemoReportStatus | string;
+  is_historical: boolean;
+  historical_source?: string | null;
+  historical_date?: string | null;
+  created_by_id?: string | null;
+  updated_by_id?: string | null;
   created_at: string;
+  updated_at?: string;
 }
 
 export interface Opportunity {
@@ -227,7 +260,7 @@ export interface NotificationItem {
 }
 
 export interface TimelineItem {
-  type: 'call' | 'note' | 'task' | 'email' | 'whatsapp' | 'status_change';
+  type: 'call' | 'note' | 'task' | 'email' | 'whatsapp' | 'status_change' | 'audit' | 'demo';
   id: string;
   timestamp: string;
   user: string;
@@ -244,6 +277,10 @@ export interface TimelineItem {
   message_preview?: string;
   old_status?: string;
   new_status?: string;
+  action?: string;
+  stage?: string;
+  old_value?: any;
+  new_value?: any;
 }
 
 export interface ApiResponse<T> {

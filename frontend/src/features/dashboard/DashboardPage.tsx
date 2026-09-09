@@ -40,6 +40,8 @@ import {
   X,
   Target,
   ArrowUpRight,
+  ArrowRight,
+  AlertTriangle,
   CheckCircle,
   FileText,
   UserCheck,
@@ -66,6 +68,15 @@ interface UserPerformanceRow {
   demo_agreed: number;
   demo_done: number;
   demo_cancelled: number;
+  demos_total?: number;
+  demos_interested?: number;
+  demos_pending?: number;
+  demos_postponed?: number;
+  demos_not_interested?: number;
+  demos_cancelled_status?: number;
+  demos_needs_report?: number;
+  demos_report_complete?: number;
+  report_completion_rate?: number;
   follow_ups: number;
   recalls: number;
   opportunities: number;
@@ -447,7 +458,7 @@ export const DashboardPage: React.FC = () => {
           subtitle={`${kpis.unique_contacts || 0} ${isRTL ? 'جهة اتصال فريدة' : 'unique contacts'}`}
           icon={<PhoneCall size={22} />}
           color="var(--color-accent)"
-          onClick={() => (window.location.href = '/contacts')}
+          onClick={() => navigate('/contacts')}
           primary
         />
 
@@ -458,7 +469,7 @@ export const DashboardPage: React.FC = () => {
           subtitle={isRTL ? "في انتظار الجدولة" : "Awaiting scheduling"}
           icon={<Presentation size={22} />}
           color="var(--color-accent)"
-          onClick={() => (window.location.href = '/demos?stage=REQUESTED')}
+          onClick={() => navigate('/demos?status=PENDING')}
           primary
         />
 
@@ -469,7 +480,7 @@ export const DashboardPage: React.FC = () => {
           subtitle={`$${(kpis.pipeline_value || 0).toLocaleString()} ${isRTL ? 'القيمة' : 'pipeline value'}`}
           icon={<TrendingUp size={22} />}
           color="var(--color-accent)"
-          onClick={() => (window.location.href = '/opportunities')}
+          onClick={() => navigate('/opportunities')}
           primary
         />
 
@@ -480,10 +491,219 @@ export const DashboardPage: React.FC = () => {
           subtitle={isRTL ? "تتطلب متابعة إدارية" : "Urgent manager review"}
           icon={<AlertCircle size={22} />}
           color={kpis.overdue_tasks > 0 ? 'var(--color-danger)' : 'var(--color-accent)'}
-          onClick={() => (window.location.href = '/tasks?overdue_only=true')}
+          onClick={() => navigate('/tasks?overdue_only=true')}
           primary
           urgent={kpis.overdue_tasks > 0}
         />
+      </div>
+
+      {/* ── Personalized Sales Rep View (if not manager) ───────────────── */}
+      {!data?.is_manager && data?.my_metrics && (
+        <div
+          className="card"
+          style={{
+            padding: 'var(--space-4) var(--space-5)',
+            backgroundColor: 'rgba(255, 30, 87, 0.04)',
+            border: '1px solid rgba(255, 30, 87, 0.25)',
+            borderRadius: 'var(--radius-xl)',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--space-3)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+              <Presentation size={18} style={{ color: '#FF1E57' }} />
+              <h3 className="font-bold text-base" style={{ color: 'var(--neutral-900)' }}>
+                {isRTL ? `مؤشرات عروضي الشخصية — ${user?.first_name}` : `My Personal Demo & Pipeline Overview — ${user?.first_name}`}
+              </h3>
+            </div>
+            <span className="badge badge-accent text-xs">Personal Focus</span>
+          </div>
+
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
+              gap: 'var(--space-3)',
+            }}
+          >
+            <div
+              onClick={() => navigate('/demos?status=ALL')}
+              style={{ cursor: 'pointer', padding: 'var(--space-3)', backgroundColor: 'var(--bg-surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-light)' }}
+            >
+              <div className="text-xs text-muted">My Total Demos</div>
+              <div className="font-bold text-xl" style={{ color: 'var(--neutral-900)', marginTop: '2px' }}>
+                {data.my_metrics.my_total_demos || 0}
+              </div>
+            </div>
+
+            <div
+              onClick={() => navigate('/demos?status=INTERESTED_NEXT_STEP')}
+              style={{ cursor: 'pointer', padding: 'var(--space-3)', backgroundColor: 'var(--bg-surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-light)' }}
+            >
+              <div className="text-xs text-muted">Interested / Next Step</div>
+              <div className="font-bold text-xl" style={{ color: 'var(--color-success)', marginTop: '2px' }}>
+                {data.my_metrics.my_interested_demos || 0}
+              </div>
+            </div>
+
+            <div
+              onClick={() => navigate('/demos?status=PENDING')}
+              style={{ cursor: 'pointer', padding: 'var(--space-3)', backgroundColor: 'var(--bg-surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-light)' }}
+            >
+              <div className="text-xs text-muted">Pending Demos</div>
+              <div className="font-bold text-xl" style={{ color: 'var(--color-primary)', marginTop: '2px' }}>
+                {data.my_metrics.my_pending_demos || 0}
+              </div>
+            </div>
+
+            <div
+              onClick={() => navigate('/demos?report_status=NEEDS_REPORT')}
+              style={{
+                cursor: 'pointer',
+                padding: 'var(--space-3)',
+                backgroundColor: data.my_metrics.my_demos_needing_reports > 0 ? '#FEF3C7' : 'var(--bg-surface)',
+                borderRadius: 'var(--radius-md)',
+                border: data.my_metrics.my_demos_needing_reports > 0 ? '1px solid #F59E0B' : '1px solid var(--border-light)',
+              }}
+            >
+              <div className="text-xs font-semibold" style={{ color: data.my_metrics.my_demos_needing_reports > 0 ? '#B45309' : 'var(--neutral-500)' }}>
+                Demos Needing Reports
+              </div>
+              <div className="font-bold text-xl" style={{ color: data.my_metrics.my_demos_needing_reports > 0 ? '#B45309' : 'var(--neutral-900)', marginTop: '2px' }}>
+                {data.my_metrics.my_demos_needing_reports || 0}
+              </div>
+            </div>
+
+            <div
+              onClick={() => navigate('/demos')}
+              style={{ cursor: 'pointer', padding: 'var(--space-3)', backgroundColor: 'var(--bg-surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-light)' }}
+            >
+              <div className="text-xs text-muted">Upcoming Next Steps</div>
+              <div className="font-bold text-xl" style={{ color: 'var(--color-accent)', marginTop: '2px' }}>
+                {data.my_metrics.my_upcoming_next_steps || 0}
+              </div>
+            </div>
+
+            <div
+              onClick={() => navigate('/demos')}
+              style={{
+                cursor: 'pointer',
+                padding: 'var(--space-3)',
+                backgroundColor: data.my_metrics.my_overdue_next_steps > 0 ? '#FEE2E2' : 'var(--bg-surface)',
+                borderRadius: 'var(--radius-md)',
+                border: data.my_metrics.my_overdue_next_steps > 0 ? '1px solid #EF4444' : '1px solid var(--border-light)',
+              }}
+            >
+              <div className="text-xs font-semibold" style={{ color: data.my_metrics.my_overdue_next_steps > 0 ? '#991B1B' : 'var(--neutral-500)' }}>
+                Overdue Next Steps
+              </div>
+              <div className="font-bold text-xl" style={{ color: data.my_metrics.my_overdue_next_steps > 0 ? '#991B1B' : 'var(--neutral-900)', marginTop: '2px' }}>
+                {data.my_metrics.my_overdue_next_steps || 0}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Demo Performance & Status Filters Section ──────────────────── */}
+      <div
+        className="card"
+        style={{
+          padding: 'var(--space-4) var(--space-5)',
+          backgroundColor: 'var(--bg-surface)',
+          borderRadius: 'var(--radius-xl)',
+          border: '1px solid var(--border-color)',
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-3)', flexWrap: 'wrap', gap: 'var(--space-2)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+            <Presentation size={18} style={{ color: 'var(--color-accent)' }} />
+            <h3 className="font-bold text-base" style={{ color: 'var(--neutral-900)' }}>
+              {isRTL ? "مركز تقارير العروض التوضيحية (Demos Intelligence)" : "Demo Performance & Status Command"}
+            </h3>
+          </div>
+          <button
+            onClick={() => navigate('/demos')}
+            className="btn btn-ghost btn-sm text-xs"
+            style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--color-primary)' }}
+          >
+            <span>{isRTL ? "فتح جدول العروض كاملاً" : "View Full Demos Workspace"}</span>
+            <ArrowRight size={13} />
+          </button>
+        </div>
+
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+            gap: 'var(--space-3)',
+          }}
+        >
+          <MetricCard
+            title={isRTL ? "إجمالي العروض" : "All Demos"}
+            value={kpis.demos_total || (kpis.demo_agreed || 0) + (kpis.demo_completed || 0)}
+            subtitle={isRTL ? "عرض شامل" : "Complete records"}
+            icon={<Presentation size={16} />}
+            color="var(--color-accent)"
+            onClick={() => navigate('/demos?status=ALL')}
+          />
+          <MetricCard
+            title={isRTL ? "مهتم / خطوة تالية" : "Interested / Next Step"}
+            value={kpis.demos_interested || 0}
+            subtitle={isRTL ? "فرص ذات أولوية" : "High potential deals"}
+            icon={<CheckCircle size={16} />}
+            color="var(--color-success)"
+            onClick={() => navigate('/demos?status=INTERESTED_NEXT_STEP')}
+          />
+          <MetricCard
+            title={isRTL ? "قيد الانتظار" : "Pending Demos"}
+            value={kpis.demos_pending || kpis.demo_agreed || 0}
+            subtitle={isRTL ? "تحت المتابعة" : "Awaiting decision"}
+            icon={<Clock size={16} />}
+            color="var(--color-accent)"
+            onClick={() => navigate('/demos?status=PENDING')}
+          />
+          <MetricCard
+            title={isRTL ? "مؤجل" : "Postponed Demos"}
+            value={kpis.demos_postponed || 0}
+            subtitle={isRTL ? "تتطلب إعادة جدولة" : "Rescheduled calls"}
+            icon={<Calendar size={16} />}
+            color="var(--color-accent)"
+            onClick={() => navigate('/demos?status=POSTPONED')}
+          />
+          <MetricCard
+            title={isRTL ? "غير مهتم" : "Not Interested"}
+            value={kpis.demos_not_interested || 0}
+            subtitle={isRTL ? "تم توثيق السبب" : "Documented reasons"}
+            icon={<PhoneOff size={16} />}
+            color="var(--neutral-500)"
+            onClick={() => navigate('/demos?status=NOT_INTERESTED')}
+          />
+          <MetricCard
+            title={isRTL ? "ملغي / لم يحضر" : "Cancelled Demos"}
+            value={kpis.demos_cancelled_status || kpis.demo_cancelled || 0}
+            subtitle={isRTL ? "فرص ضائعة" : "No-shows & cancels"}
+            icon={<AlertCircle size={16} />}
+            color="var(--color-danger)"
+            onClick={() => navigate('/demos?status=CANCELLED')}
+          />
+          <MetricCard
+            title={isRTL ? "تحتاج إلى تقرير" : "Needs Report"}
+            value={kpis.demos_needs_report || 0}
+            subtitle={isRTL ? "توثيق إلزامي" : "Mandatory reports"}
+            icon={<AlertTriangle size={16} />}
+            color={kpis.demos_needs_report > 0 ? 'var(--color-danger)' : 'var(--color-accent)'}
+            urgent={kpis.demos_needs_report > 0}
+            onClick={() => navigate('/demos?report_status=NEEDS_REPORT')}
+          />
+          <MetricCard
+            title={isRTL ? "تقارير مكتملة" : "Report Complete"}
+            value={kpis.demos_report_complete || kpis.demo_completed || 0}
+            subtitle={isRTL ? "موثقة بالكامل" : "Audited & complete"}
+            icon={<CheckCircle2 size={16} />}
+            color="var(--color-success)"
+            onClick={() => navigate('/demos?report_status=REPORT_COMPLETE')}
+          />
+        </div>
       </div>
 
       {/* ── Section Divider ─────────────────────────────────────────────── */}
@@ -827,9 +1047,10 @@ export const DashboardPage: React.FC = () => {
                   <th>{isRTL ? "المكالمات" : "Calls"}</th>
                   <th>{isRTL ? "إيميل" : "Emails"}</th>
                   <th>{isRTL ? "واتساب" : "WhatsApp"}</th>
-                  <th>{isRTL ? "عروض متفق عليها" : "Demo Agreed"}</th>
+                  <th>{isRTL ? "إجمالي العروض" : "Total Demos"}</th>
+                  <th>{isRTL ? "تحتاج تقرير" : "Needs Report"}</th>
+                  <th>{isRTL ? "نسبة إكمال التقرير" : "Report Done %"}</th>
                   <th>{isRTL ? "عروض مكتملة" : "Demo Done"}</th>
-                  <th>{isRTL ? "عروض ملغية" : "Demo Cancel"}</th>
                   <th>{isRTL ? "متابعات" : "Follow-ups"}</th>
                   <th>{isRTL ? "الفرص" : "Opps"}</th>
                   <th>{isRTL ? "مهام متأخرة" : "Overdue"}</th>
@@ -907,17 +1128,28 @@ export const DashboardPage: React.FC = () => {
                         <td>{row.whatsapp}</td>
                         <td>
                           <span className="font-semibold" style={{ color: '#8b5cf6' }}>
-                            {row.demo_agreed}
+                            {row.demos_total ?? row.demo_agreed}
                           </span>
+                        </td>
+                        <td>
+                          {(row.demos_needs_report || 0) > 0 ? (
+                            <span className="badge badge-error text-xs font-bold">
+                              {row.demos_needs_report}
+                            </span>
+                          ) : (
+                            <span className="text-xs text-muted">0</span>
+                          )}
+                        </td>
+                        <td>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <span className="text-xs font-bold" style={{ color: (row.report_completion_rate || 100) >= 80 ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                              {row.report_completion_rate ?? 100}%
+                            </span>
+                          </div>
                         </td>
                         <td>
                           <span className="font-semibold text-success">
                             {row.demo_done}
-                          </span>
-                        </td>
-                        <td>
-                          <span className={row.demo_cancelled > 0 ? 'text-error font-semibold' : 'text-muted'}>
-                            {row.demo_cancelled}
                           </span>
                         </td>
                         <td>{row.follow_ups}</td>

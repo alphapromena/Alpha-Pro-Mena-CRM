@@ -84,6 +84,16 @@ class User(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     preferred_language: Mapped[str] = mapped_column(String(10), nullable=False, default="en")
     last_login_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # Security & Verification
+    must_change_password: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    email_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    verification_token_hash: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    verification_token_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    verification_sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    password_reset_token_hash: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    password_reset_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    password_reset_sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
     # Relationships
     team: Mapped[Optional[Team]] = relationship("Team", foreign_keys=[team_id], back_populates="members")
     managed_team: Mapped[Optional[Team]] = relationship("Team", foreign_keys="Team.manager_id", back_populates="manager")

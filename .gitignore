@@ -2,7 +2,10 @@
 .env
 .env.*
 !.env.example
+!backend/.env.example
 backend/.env
+backend/.env.*
+!backend/.env.example
 *.pem
 *.key
 service-account*.json
@@ -70,3 +73,5 @@ api/__pycache__/
 
 .vercel
 .env*
+!.env.example
+!backend/.env.example

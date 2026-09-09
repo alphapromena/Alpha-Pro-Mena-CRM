@@ -49,9 +49,17 @@ export const LoginPage: React.FC = () => {
     setIsLoading(true);
 
     try {
-      await api.post('/auth/login', { email, password });
+      const res = await api.post<any>('/auth/login', { email, password });
       await fetchMe();
       const currentUser = useAuthStore.getState().user;
+      if (res?.must_change_password || currentUser?.must_change_password) {
+        navigate('/set-password');
+        return;
+      }
+      if (res?.email_verified === false || currentUser?.email_verified === false) {
+        navigate('/verify-email');
+        return;
+      }
       if (currentUser?.role === 'DATA_OPS') {
         navigate('/leads/pool');
       } else {
@@ -68,20 +76,20 @@ export const LoginPage: React.FC = () => {
     }
   };
 
-  const handleQuickLogin = (roleEmail: string, rolePass: string) => {
+  const handleQuickSelect = (roleEmail: string) => {
     setEmail(roleEmail);
-    setPassword(rolePass);
+    setPassword('');
     setError(null);
   };
 
   const quickAccounts = [
-    { label: 'Saleh', email: 'saleh@alphapromena.com', pass: 'Sales123!', role: 'SALES' },
-    { label: 'Amin', email: 'amin@alphapromena.com', pass: 'Sales123!', role: 'SALES' },
-    { label: 'Aseel', email: 'aseel@alphapromena.com', pass: 'Sales123!', role: 'DATA OPS' },
-    { label: 'Abdullah', email: 'abdallah@alphapromena.com', pass: 'Manager123!', role: 'MANAGER' },
-    { label: 'Qusai', email: 'qusai@alphapromena.com', pass: 'TeamLead123!', role: 'TEAM LEAD' },
-    { label: 'Ghaida', email: 'ghaida@alphapromena.com', pass: 'Sales123!', role: 'SALES' },
-    { label: 'Hasan', email: 'hasan@alphapromena.com', pass: 'Sales123!', role: 'SALES' },
+    { label: 'Saleh', email: 'saleh@alphapromena.com', role: 'SALES' },
+    { label: 'Amin', email: 'amin@alphapromena.com', role: 'SALES' },
+    { label: 'Aseel', email: 'aseel@alphapromena.com', role: 'DATA OPS' },
+    { label: 'Abdallah', email: 'abdallah@alphapromena.com', role: 'MANAGER' },
+    { label: 'Qusai', email: 'qusai@alphapromena.com', role: 'TEAM LEAD' },
+    { label: 'Ghaida', email: 'ghaida@alphapromena.com', role: 'SALES' },
+    { label: 'Hassan', email: 'hassan@alphapromena.com', role: 'SALES' },
   ];
 
   return (
@@ -337,18 +345,36 @@ export const LoginPage: React.FC = () => {
 
                   {/* Password field */}
                   <div style={{ marginBottom: 'var(--space-5)' }}>
-                    <label
-                      htmlFor="login-password"
-                      style={{
-                        display: 'block',
-                        fontSize: '12px',
-                        fontWeight: 700,
-                        color: 'rgba(255, 255, 255, 0.85)',
-                        marginBottom: '6px',
-                      }}
-                    >
-                      {isRTL ? 'كلمة المرور' : 'Password'}
-                    </label>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                      <label
+                        htmlFor="login-password"
+                        style={{
+                          display: 'block',
+                          fontSize: '12px',
+                          fontWeight: 700,
+                          color: 'rgba(255, 255, 255, 0.85)',
+                          margin: 0,
+                        }}
+                      >
+                        {isRTL ? 'كلمة المرور' : 'Password'}
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => navigate('/forgot-password')}
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          padding: 0,
+                          fontSize: '11px',
+                          color: '#FF1E57',
+                          cursor: 'pointer',
+                          textDecoration: 'underline',
+                          fontWeight: 600,
+                        }}
+                      >
+                        {isRTL ? 'نسيت كلمة المرور؟' : 'Forgot Password?'}
+                      </button>
+                    </div>
                     <div style={{ position: 'relative' }}>
                       <Lock
                         size={15}
@@ -413,6 +439,24 @@ export const LoginPage: React.FC = () => {
                     <span>{isLoading ? (isRTL ? 'جاري التحقق...' : 'Authenticating...') : (isRTL ? 'تسجيل الدخول' : 'Sign In')}</span>
                     {!isLoading && <ArrowRight size={16} />}
                   </button>
+
+                  <div style={{ display: 'flex', justifyContent: 'center', marginTop: 'var(--space-3)' }}>
+                    <button
+                      type="button"
+                      onClick={() => navigate('/verify-email')}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        padding: 0,
+                        fontSize: '11px',
+                        color: 'rgba(255, 255, 255, 0.7)',
+                        cursor: 'pointer',
+                        textDecoration: 'underline',
+                      }}
+                    >
+                      {isRTL ? 'تأكيد البريد الإلكتروني / إعادة إرسال الرمز' : 'Verify Email / Resend Token'}
+                    </button>
+                  </div>
                 </form>
               </div>
             </div>
@@ -453,7 +497,7 @@ export const LoginPage: React.FC = () => {
                   <button
                     key={acc.label}
                     type="button"
-                    onClick={() => handleQuickLogin(acc.email, acc.pass)}
+                    onClick={() => handleQuickSelect(acc.email)}
                     className="btn btn-ghost btn-sm"
                     style={{
                       flexDirection: 'column',
@@ -478,7 +522,7 @@ export const LoginPage: React.FC = () => {
                   <button
                     key={acc.label}
                     type="button"
-                    onClick={() => handleQuickLogin(acc.email, acc.pass)}
+                    onClick={() => handleQuickSelect(acc.email)}
                     className="btn btn-ghost btn-sm"
                     style={{
                       flexDirection: 'column',

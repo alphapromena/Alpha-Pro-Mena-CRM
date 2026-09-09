@@ -324,36 +324,116 @@ class ContactService:
 
     async def update_contact(self, contact_id: uuid.UUID, data: dict, actor: User) -> Contact:
         contact = await self.get_contact(contact_id, actor)
-        old = {"status": contact.status, "owner_id": str(contact.owner_id) if contact.owner_id else None}
+
+        # Validate email if provided
+        if "email" in data and data["email"]:
+            norm_e = normalize_email(data["email"])
+            if norm_e and ("@" not in norm_e or "." not in norm_e.split("@")[-1]):
+                raise ValidationError("Please provide a valid email address.")
+
+        # Validate phone if provided
+        if "phone" in data and data["phone"]:
+            norm_p = normalize_phone(data["phone"])
+            if norm_p and len(norm_p) < 5:
+                raise ValidationError("Please provide a valid phone number.")
 
         updatable = [
             "first_name", "last_name", "position", "department", "email", "secondary_email",
             "phone", "secondary_phone", "country", "industry", "source", "tags", "notes",
-            "priority", "next_contact_at",
+            "priority", "next_contact_at", "status",
         ]
+
+        old_diff = {}
+        new_diff = {}
+
         for field in updatable:
             if field in data and data[field] is not None:
-                setattr(contact, field, data[field])
+                old_val = getattr(contact, field)
+                new_val = data[field]
+                if str(old_val or "").strip() != str(new_val or "").strip():
+                    old_diff[field] = old_val
+                    new_diff[field] = new_val
+                    setattr(contact, field, new_val)
 
         if "email" in data:
             contact.normalized_email = normalize_email(data["email"]) if data["email"] else None
         if "phone" in data:
             contact.normalized_phone = normalize_phone(data["phone"]) if data["phone"] else None
+
+        # Company handling
         if "company_id" in data:
-            contact.company_id = uuid.UUID(data["company_id"]) if data["company_id"] else None
+            old_c = str(contact.company_id) if contact.company_id else None
+            new_c = str(data["company_id"]) if data["company_id"] else None
+            if old_c != new_c:
+                old_diff["company_id"] = old_c
+                new_diff["company_id"] = new_c
+                contact.company_id = uuid.UUID(data["company_id"]) if data["company_id"] else None
+        elif "company_name" in data and data["company_name"]:
+            c_name = data["company_name"].strip()
+            if c_name:
+                from app.models.company import Company
+                c_stmt = select(Company).where(func.lower(Company.name) == c_name.lower())
+                found_comp = (await self.db.execute(c_stmt)).scalar_one_or_none()
+                if found_comp:
+                    if contact.company_id != found_comp.id:
+                        old_diff["company"] = contact.company.name if contact.company else None
+                        new_diff["company"] = found_comp.name
+                        contact.company_id = found_comp.id
+                else:
+                    new_comp = Company(name=c_name)
+                    self.db.add(new_comp)
+                    await self.db.flush()
+                    old_diff["company"] = contact.company.name if contact.company else None
+                    new_diff["company"] = new_comp.name
+                    contact.company_id = new_comp.id
+
+        # Lead owner handling
+        if "owner_id" in data:
+            old_o = str(contact.owner_id) if contact.owner_id else None
+            new_o = str(data["owner_id"]) if data["owner_id"] else None
+            if old_o != new_o:
+                old_diff["owner_id"] = old_o
+                new_diff["owner_id"] = new_o
+                contact.owner_id = uuid.UUID(data["owner_id"]) if data["owner_id"] else None
 
         self.db.add(contact)
         await self.db.flush()
 
-        await self.audit.log(
-            action="contact.updated",
-            entity_type="contact",
-            actor_id=actor.id,
-            entity_id=contact.id,
-            old_value=old,
-            new_value={k: data[k] for k in data if k in updatable},
-        )
-        return contact
+        # Audit logs for updates
+        if old_diff:
+            # Specific audit events for email / phone corrections
+            if "email" in new_diff and new_diff["email"] != old_diff.get("email"):
+                await self.audit.log(
+                    action="contact.email_corrected",
+                    entity_type="contact",
+                    actor_id=actor.id,
+                    entity_id=contact.id,
+                    old_value={"email": old_diff.get("email")},
+                    new_value={"email": new_diff.get("email")},
+                    notes="Contact email corrected",
+                )
+
+            if "phone" in new_diff and new_diff["phone"] != old_diff.get("phone"):
+                await self.audit.log(
+                    action="contact.phone_corrected",
+                    entity_type="contact",
+                    actor_id=actor.id,
+                    entity_id=contact.id,
+                    old_value={"phone": old_diff.get("phone")},
+                    new_value={"phone": new_diff.get("phone")},
+                    notes="Contact phone number corrected",
+                )
+
+            await self.audit.log(
+                action="contact.updated",
+                entity_type="contact",
+                actor_id=actor.id,
+                entity_id=contact.id,
+                old_value=old_diff,
+                new_value=new_diff,
+            )
+
+        return await self.get_contact(contact_id, actor)
 
     async def update_status(self, contact_id: uuid.UUID, new_status: str, actor: User) -> Contact:
         contact = await self.get_contact(contact_id, actor)
@@ -445,6 +525,94 @@ class ContactService:
             new_value={"owner_id": str(new_owner_id), "reason": reason},
         )
         return contact
+
+    async def update_contact(
+        self,
+        contact_id: uuid.UUID,
+        data: Dict[str, Any],
+        actor: User,
+    ) -> Contact:
+        """
+        Full profile update for a contact with granular audit logging.
+        Tracks old values and new values for every changed field.
+        """
+        contact = await self.get_contact(contact_id, actor)
+
+        # Handle alias job_title -> position
+        if "job_title" in data:
+            val = data.pop("job_title")
+            if val is not None and "position" not in data:
+                data["position"] = val
+
+        # Handle company name update / creation if provided
+        company_name = data.pop("company_name", None)
+        if company_name and not data.get("company_id"):
+            comp_stmt = select(Company).where(func.lower(Company.name) == company_name.strip().lower())
+            comp = (await self.db.execute(comp_stmt)).scalar_one_or_none()
+            if not comp:
+                comp = Company(name=company_name.strip())
+                self.db.add(comp)
+                await self.db.flush()
+            data["company_id"] = comp.id
+
+        # Normalize email / phone
+        if "email" in data and data["email"]:
+            data["normalized_email"] = normalize_email(data["email"])
+        if "phone" in data and data["phone"]:
+            data["normalized_phone"] = normalize_phone(data["phone"])
+
+        # Track diffs
+        old_diffs: Dict[str, Any] = {}
+        new_diffs: Dict[str, Any] = {}
+
+        for key, new_val in data.items():
+            if not hasattr(contact, key):
+                continue
+            old_val = getattr(contact, key)
+            if hasattr(old_val, "value"):
+                old_val = old_val.value
+
+            str_old = str(old_val) if old_val is not None else ""
+            str_new = str(new_val) if new_val is not None else ""
+            if str_old != str_new:
+                old_diffs[key] = str_old
+                new_diffs[key] = str_new
+                setattr(contact, key, new_val)
+
+        if old_diffs:
+            contact.updated_at = datetime.now(timezone.utc)
+            self.db.add(contact)
+            await self.db.flush()
+
+            # Identify if email or phone specifically changed
+            is_email_corr = "email" in old_diffs
+            is_phone_corr = "phone" in old_diffs
+            action_name = "UPDATE"
+            if is_email_corr and len(old_diffs) == 1:
+                action_name = "contact.email_corrected"
+            elif is_phone_corr and len(old_diffs) == 1:
+                action_name = "contact.phone_corrected"
+
+            await self.audit.log(
+                action=action_name,
+                entity_type="contact",
+                actor_id=actor.id,
+                entity_id=contact.id,
+                old_value=old_diffs,
+                new_value=new_diffs,
+                notes=f"Contact profile updated by {actor.full_name}",
+            )
+
+        reload_stmt = (
+            select(Contact)
+            .where(Contact.id == contact.id)
+            .options(
+                selectinload(Contact.company),
+                selectinload(Contact.owner),
+                selectinload(Contact.calls),
+            )
+        )
+        return (await self.db.execute(reload_stmt)).scalar_one()
 
     async def soft_delete(self, contact_id: uuid.UUID, actor: User) -> None:
         if not actor.is_manager_or_above:
@@ -734,21 +902,82 @@ class ContactService:
                 "message_preview": w.message_preview, "direction": w.direction,
             })
 
-        # Status changes from audit log
-        status_changes = (await self.db.execute(
+        # Demos
+        from app.models.demo import Demo
+        demos = (await self.db.execute(
+            select(Demo).where(Demo.contact_id == contact_id).options(selectinload(Demo.owner)).order_by(Demo.scheduled_at.desc().nullslast())
+        )).scalars().all()
+        for d in demos:
+            d_ts = d.scheduled_at or d.completed_at or d.created_at
+            items.append({
+                "type": "demo",
+                "id": str(d.id),
+                "timestamp": d_ts.isoformat() if d_ts else d.created_at.isoformat(),
+                "user": d.owner.full_name if d.owner else "Unknown",
+                "status": d.status,
+                "stage": d.stage,
+                "report_status": d.report_status,
+                "summary": d.summary,
+                "presenter": d.presenter,
+                "attendees": d.attendees,
+                "next_step": d.next_step,
+                "is_historical": d.is_historical,
+                "notes": d.notes,
+                "result": d.result,
+            })
+
+        # Contact Audits (updates, corrections, creation)
+        contact_audits = (await self.db.execute(
             select(AuditLog)
-            .where(AuditLog.entity_type == "contact", AuditLog.entity_id == contact_id,
-                   AuditLog.action == "contact.status_changed")
+            .where(
+                AuditLog.entity_type == "contact",
+                AuditLog.entity_id == contact_id,
+                AuditLog.action.in_([
+                    "contact.updated",
+                    "contact.email_corrected",
+                    "contact.phone_corrected",
+                    "contact.created",
+                    "contact.status_changed",
+                    "contact.dnc_set",
+                    "UPDATE",
+                ])
+            )
             .options(selectinload(AuditLog.actor))
             .order_by(AuditLog.created_at.desc())
         )).scalars().all()
-        for a in status_changes:
-            items.append({
-                "type": "status_change", "id": str(a.id), "timestamp": a.created_at.isoformat(),
-                "user": a.actor.full_name if a.actor else "System",
-                "old_status": a.old_value.get("status") if a.old_value else None,
-                "new_status": a.new_value.get("status") if a.new_value else None,
-            })
+        for a in contact_audits:
+            if a.action == "contact.status_changed":
+                items.append({
+                    "type": "status_change",
+                    "id": str(a.id),
+                    "timestamp": a.created_at.isoformat(),
+                    "user": a.actor.full_name if a.actor else "System",
+                    "old_status": a.old_value.get("status") if a.old_value else None,
+                    "new_status": a.new_value.get("status") if a.new_value else None,
+                })
+            else:
+                old_v = a.old_value or {}
+                new_v = a.new_value or {}
+                diffs = [
+                    {"field": k, "old_value": old_v.get(k), "new_value": new_v.get(k)}
+                    for k in new_v.keys()
+                ]
+                items.append({
+                    "type": "audit",
+                    "id": str(a.id),
+                    "action": a.action,
+                    "timestamp": a.created_at.isoformat(),
+                    "user": a.actor.full_name if a.actor else "System",
+                    "old_value": old_v,
+                    "new_value": new_v,
+                    "audit": {
+                        "action": a.action,
+                        "field_diffs": diffs,
+                        "old_value": old_v,
+                        "new_value": new_v,
+                    },
+                    "notes": a.notes,
+                })
 
         # Sort all items by timestamp descending
         items.sort(key=lambda x: x["timestamp"], reverse=True)
