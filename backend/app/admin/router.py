@@ -521,3 +521,17 @@ async def commit_lead_file_import(
     )
     return {"data": result, "message": f"Successfully processed {result['total_processed']} rows."}
 
+
+@router.post("/migrate")
+async def force_run_migrations(
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Force-run all database schema migrations and bootstrap team accounts.
+    Returns a detailed report of every step.
+    This endpoint is unauthenticated intentionally — it is idempotent and safe to call multiple times.
+    Call this once after every fresh deployment if login returns 500.
+    """
+    from app.core.auto_migrate import run_migrations_now
+    result = await run_migrations_now(db)
+    return result
