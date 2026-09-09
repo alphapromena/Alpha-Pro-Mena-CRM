@@ -161,10 +161,16 @@ class AuthService:
 
     async def activate_password(
         self, user: User, new_password: str, current_password: Optional[str] = None
-    ) -> None:
+    ) -> tuple[User, str, str]:
         """First-login or forced password change activation."""
         if current_password and not verify_password(current_password, user.password_hash):
             raise UnauthorizedError("Current password is incorrect.")
+
+        if new_password.strip() == "123456789":
+            raise ValidationError("New password cannot be the temporary bootstrap password.")
+
+        if verify_password(new_password, user.password_hash):
+            raise ValidationError("New password cannot be the same as your current or temporary password.")
 
         is_strong, err_msg = validate_password_strength(new_password)
         if not is_strong:
@@ -175,6 +181,10 @@ class AuthService:
         self.db.add(user)
         await self.db.flush()
 
+        # Mint fresh session tokens
+        access_token = create_access_token(user_id=user.id, role=user.role)
+        refresh_token = create_refresh_token(user_id=user.id)
+
         await self.audit.log(
             action="user.password_activated",
             entity_type="user",
@@ -183,6 +193,7 @@ class AuthService:
             notes="User completed first-login password activation",
         )
         logger.info("auth.password_activated", user_id=str(user.id))
+        return user, access_token, refresh_token
 
     # ── Email Verification ─────────────────────────────────────────────────────
 
@@ -296,6 +307,7 @@ class AuthService:
         """
         Initiate password reset.
         Timing-safe: does not leak whether email is in system.
+        Enforces resend cooldown and invalidates previous token.
         """
         normalized = normalize_email(email)
         stmt = select(User).where(User.normalized_email == normalized, User.deleted_at.is_(None))
@@ -306,8 +318,20 @@ class AuthService:
             logger.info("auth.password_reset_noop", email=normalized)
             return
 
-        raw_token = generate_secure_token()
         now = datetime.now(timezone.utc)
+        if user.password_reset_sent_at:
+            r_sent = user.password_reset_sent_at
+            if r_sent.tzinfo is None:
+                r_sent = r_sent.replace(tzinfo=timezone.utc)
+            seconds_since = (now - r_sent).total_seconds()
+            cooldown = 60
+            if seconds_since < cooldown:
+                remaining = max(1, int(cooldown - seconds_since))
+                raise RateLimitError(
+                    f"Please wait {remaining} seconds before requesting another reset email."
+                )
+
+        raw_token = generate_secure_token()
         user.password_reset_token_hash = hash_token(raw_token)
         user.password_reset_expires_at = now + timedelta(hours=settings.password_reset_token_expire_hours)
         user.password_reset_sent_at = now
@@ -333,6 +357,9 @@ class AuthService:
         if not token or not token.strip():
             raise ValidationError("Reset token is required.")
 
+        if new_password.strip() == "123456789":
+            raise ValidationError("New password cannot be the temporary bootstrap password.")
+
         is_strong, err_msg = validate_password_strength(new_password)
         if not is_strong:
             raise ValidationError(err_msg)
@@ -345,6 +372,9 @@ class AuthService:
         user = (await self.db.execute(stmt)).scalar_one_or_none()
         if not user:
             raise ValidationError("Invalid or expired password reset token.")
+
+        if verify_password(new_password, user.password_hash):
+            raise ValidationError("New password cannot be the same as your current password.")
 
         now = datetime.now(timezone.utc)
         if user.password_reset_expires_at:

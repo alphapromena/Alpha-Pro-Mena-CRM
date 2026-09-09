@@ -24,11 +24,28 @@ export const SetPasswordPage: React.FC = () => {
   const hasLower = /[a-z]/.test(newPassword);
   const hasDigit = /[0-9]/.test(newPassword);
   const hasSpecial = /[^A-Za-z0-9]/.test(newPassword);
-  const isMatch = newPassword && newPassword === confirmPassword;
-  const isPolicyValid = hasMinLen && hasUpper && hasLower && hasDigit && hasSpecial && isMatch;
+  const isMatch = Boolean(newPassword && newPassword === confirmPassword);
+  const isNotBootstrap = newPassword.trim() !== '123456789';
+  const isPolicyValid = hasMinLen && hasUpper && hasLower && hasDigit && hasSpecial && isMatch && isNotBootstrap;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (newPassword.trim() === '123456789') {
+      setError(
+        isRTL
+          ? 'لا يمكن أن تكون كلمة المرور الجديدة هي كلمة المرور المؤقتة.'
+          : 'New password cannot be the temporary activation password.'
+      );
+      return;
+    }
+    if (currentPassword && newPassword === currentPassword) {
+      setError(
+        isRTL
+          ? 'يجب أن تختلف كلمة المرور الجديدة عن كلمة المرور الحالية.'
+          : 'New password must be different from current password.'
+      );
+      return;
+    }
     if (!isPolicyValid) {
       setError(
         isRTL

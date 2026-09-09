@@ -50,6 +50,16 @@ async def get_current_user(
     if not user:
         raise UnauthorizedError("User not found or inactive.")
 
+    # Server-side guard: Users in forced password activation state cannot access protected CRM APIs
+    exempt_paths = {
+        "/api/v1/auth/me",
+        "/api/v1/auth/logout",
+        "/api/v1/auth/activate-password",
+        "/api/v1/auth/change-password",
+    }
+    if user.must_change_password and request.url.path not in exempt_paths:
+        raise ForbiddenError("Password change is required before accessing CRM features.")
+
     # Bind user context for all subsequent log calls in this request
     structlog.contextvars.bind_contextvars(
         user_id=str(user.id),

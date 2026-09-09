@@ -194,18 +194,35 @@ async def change_password(
 
 @router.post("/activate-password")
 async def activate_password(
+    response: Response,
     body: ActivatePasswordRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Set personal password upon first activation/login."""
     auth_service = AuthService(db)
-    await auth_service.activate_password(
+    user, access_token, refresh_token = await auth_service.activate_password(
         user=current_user,
         new_password=body.new_password,
         current_password=body.current_password,
     )
-    return {"message": "Personal password set successfully."}
+    response.set_cookie(
+        key=ACCESS_TOKEN_COOKIE,
+        value=access_token,
+        max_age=settings.jwt_access_token_expire_minutes * 60,
+        **COOKIE_KWARGS,
+    )
+    response.set_cookie(
+        key=REFRESH_TOKEN_COOKIE,
+        value=refresh_token,
+        max_age=settings.jwt_refresh_token_expire_days * 86400,
+        **COOKIE_KWARGS,
+    )
+    return {
+        "message": "Personal password set successfully.",
+        "access_token": access_token,
+        "must_change_password": False,
+    }
 
 
 @router.post("/verify-email")

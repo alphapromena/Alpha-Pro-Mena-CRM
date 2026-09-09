@@ -60,7 +60,7 @@ async def send_email(
             "email.mock_delivered",
             to=to_email,
             subject=subject,
-            token=meta.get("token") if meta and "token" in meta else None,
+            action=meta.get("action") if meta else None,
         )
         return True
 
