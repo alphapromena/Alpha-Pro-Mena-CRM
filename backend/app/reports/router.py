@@ -254,20 +254,57 @@ async def management_dashboard(
     whatsapp_task_count = (await db.execute(whatsapp_task_stmt)).scalar_one() or 0
     total_whatsapp = whatsapp_act_count + whatsapp_task_count + whatsapp_req_calls
 
-    # ── 3. Demos Breakdown (Company Level) ──────────────────────────────────────
-    demo_stmt = select(Demo).where(Demo.created_at.between(df, dt)).options(selectinload(Demo.contact).selectinload(Contact.company), selectinload(Demo.company))
+    # ── 3. Demos Breakdown (Company Level & Status Distribution) ───────────────
+    demo_stmt = select(Demo).options(
+        selectinload(Demo.contact).selectinload(Contact.company),
+        selectinload(Demo.company),
+        selectinload(Demo.owner),
+    )
     if user_id:
         demo_stmt = demo_stmt.where(Demo.owner_id == uuid.UUID(user_id))
     if company_id:
         demo_stmt = demo_stmt.where(Demo.company_id == uuid.UUID(company_id))
     if demo_stage:
-        demo_stmt = demo_stmt.where(Demo.stage == demo_stage)
+        demo_stmt = demo_stmt.where(or_(Demo.stage == demo_stage, Demo.status == demo_stage))
 
-    demo_rows = (await db.execute(demo_stmt)).scalars().all()
+    # All demos in scope (not limited to date range for lifecycle tracking, or within date range for activity)
+    all_scoped_demos = (await db.execute(demo_stmt)).scalars().all()
+
+    # Demos created/scheduled within date range for activity KPIs
+    demo_period_stmt = demo_stmt.where(
+        or_(
+            Demo.created_at.between(df, dt),
+            Demo.scheduled_at.between(df, dt),
+            Demo.historical_date.between(df, dt),
+        )
+    )
+    demo_rows = (await db.execute(demo_period_stmt)).scalars().all()
+
+    demos_total = len(demo_rows)
+    demos_interested = len([d for d in demo_rows if d.status in ("INTERESTED_NEXT_STEP", "INTERESTED")])
+    demos_pending = len([d for d in demo_rows if d.status in ("PENDING", "REQUESTED", "SCHEDULED")])
+    demos_postponed = len([d for d in demo_rows if d.status in ("POSTPONED", "RESCHEDULED")])
+    demos_not_interested = len([d for d in demo_rows if d.status in ("NOT_INTERESTED", "LOST")])
+    demos_cancelled = len([d for d in demo_rows if d.status in ("CANCELLED", "NO_SHOW")])
+    demos_needs_report = len([d for d in demo_rows if d.report_status == "NEEDS_REPORT"])
+    demos_report_complete = len([d for d in demo_rows if d.report_status == "REPORT_COMPLETE"])
+    demos_historical = len([d for d in demo_rows if d.is_historical])
+
+    # Next steps tracking across all active demos
+    upcoming_next_steps = len([
+        d for d in all_scoped_demos
+        if d.next_step_due_date and d.next_step_due_date >= now
+    ])
+    overdue_next_steps = len([
+        d for d in all_scoped_demos
+        if d.next_step_due_date and d.next_step_due_date < now
+        and d.status not in ("CANCELLED", "NOT_INTERESTED")
+    ])
+
+    # Legacy stage counts preserved for backward compatibility
     demos_agreed = len([d for d in demo_rows if d.stage in ["REQUESTED", "SCHEDULED"]]) + demo_req_calls
-    demos_completed = len([d for d in demo_rows if d.stage == "COMPLETED"])
-    demos_cancelled = len([d for d in demo_rows if d.stage in ["CANCELLED", "NO_SHOW"]])
-    demos_total = demos_agreed + demos_completed + demos_cancelled
+    demos_completed = len([d for d in demo_rows if d.stage == "COMPLETED" or d.report_status == "REPORT_COMPLETE"])
+    demos_cancelled_stage = len([d for d in demo_rows if d.stage in ["CANCELLED", "NO_SHOW"] or d.status in ("CANCELLED", "NO_SHOW")])
 
     # Deduplicate unique companies that reached Demo
     demo_companies_set: set[str] = set()
@@ -553,6 +590,17 @@ async def management_dashboard(
         u_ans_rate = round((u_answered / u_total_calls) * 100, 1) if u_total_calls > 0 else None
         u_int_rate = round((u_interested / u_answered) * 100, 1) if u_answered > 0 else None
         
+        u_demos_all = user_demos_map.get(uid_str, [])
+        u_demos_total = len(u_demos_all)
+        u_demos_interested = len([d for d in u_demos_all if d.status in ("INTERESTED_NEXT_STEP", "INTERESTED")])
+        u_demos_pending = len([d for d in u_demos_all if d.status in ("PENDING", "REQUESTED", "SCHEDULED")])
+        u_demos_postponed = len([d for d in u_demos_all if d.status in ("POSTPONED", "RESCHEDULED")])
+        u_demos_not_interested = len([d for d in u_demos_all if d.status in ("NOT_INTERESTED", "LOST")])
+        u_demos_cancelled = len([d for d in u_demos_all if d.status in ("CANCELLED", "NO_SHOW")])
+        u_demos_needs_report = len([d for d in u_demos_all if d.report_status == "NEEDS_REPORT"])
+        u_demos_report_complete = len([d for d in u_demos_all if d.report_status == "REPORT_COMPLETE"])
+        u_report_completion_rate = round((u_demos_report_complete / max(1, u_demos_total)) * 100, 1) if u_demos_total > 0 else 100.0
+
         u_record = {
             "user_id": uid_str,
             "user_name": u.first_name,  # First name only as explicitly required
@@ -570,6 +618,15 @@ async def management_dashboard(
             "demo_agreed": u_demo_agreed,
             "demo_done": u_demo_done,
             "demo_cancelled": u_demo_cancelled,
+            "demos_total": u_demos_total,
+            "demos_interested": u_demos_interested,
+            "demos_pending": u_demos_pending,
+            "demos_postponed": u_demos_postponed,
+            "demos_not_interested": u_demos_not_interested,
+            "demos_cancelled_status": u_demos_cancelled,
+            "demos_needs_report": u_demos_needs_report,
+            "demos_report_complete": u_demos_report_complete,
+            "report_completion_rate": u_report_completion_rate,
             "unique_engaged_companies": len(u_engaged_comp_set),
             "unique_demo_companies": len(u_demo_comp_set),
             "follow_ups": u_fu_count,
@@ -649,6 +706,87 @@ async def management_dashboard(
 
     manager_breakdown.sort(key=lambda x: (x["team_performance_score"], x["calls"]), reverse=True)
 
+    # ── 11. Recent Contact Updates & Highlights ──────────────────────────────
+    contact_updates_stmt = (
+        select(AuditLog)
+        .where(
+            AuditLog.entity_type == "contact",
+            AuditLog.action.in_(["contact.updated", "contact.email_corrected", "contact.phone_corrected", "contact.created"]),
+        )
+        .options(selectinload(AuditLog.actor))
+        .order_by(AuditLog.created_at.desc())
+        .limit(10)
+    )
+    contact_updates_rows = (await db.execute(contact_updates_stmt)).scalars().all()
+    recent_contact_updates = [
+        {
+            "id": str(a.id),
+            "entity_id": str(a.entity_id),
+            "action": a.action,
+            "actor_name": a.actor.full_name if a.actor else "System",
+            "created_at": a.created_at.isoformat(),
+            "notes": a.notes,
+            "old_value": a.old_value,
+            "new_value": a.new_value,
+        }
+        for a in contact_updates_rows
+    ]
+
+    # Upcoming demos and demos needing reports
+    upcoming_demos_list = [
+        {
+            "id": str(d.id),
+            "contact_name": d.contact.full_name if d.contact else None,
+            "company_name": d.company.name if d.company else (d.contact.company.name if (d.contact and d.contact.company) else None),
+            "owner_name": d.owner.full_name if d.owner else "Unassigned",
+            "status": d.status,
+            "stage": d.stage,
+            "scheduled_at": d.scheduled_at.isoformat() if d.scheduled_at else None,
+            "next_step": d.next_step,
+            "next_step_due_date": d.next_step_due_date.isoformat() if d.next_step_due_date else None,
+            "report_status": d.report_status,
+        }
+        for d in sorted(
+            [d for d in all_scoped_demos if (d.scheduled_at and d.scheduled_at >= now) or (d.next_step_due_date and d.next_step_due_date >= now)],
+            key=lambda x: (x.scheduled_at or x.next_step_due_date or x.created_at)
+        )[:10]
+    ]
+
+    demos_needing_reports_list = [
+        {
+            "id": str(d.id),
+            "contact_name": d.contact.full_name if d.contact else None,
+            "company_name": d.company.name if d.company else (d.contact.company.name if (d.contact and d.contact.company) else None),
+            "owner_name": d.owner.full_name if d.owner else "Unassigned",
+            "status": d.status,
+            "stage": d.stage,
+            "scheduled_at": d.scheduled_at.isoformat() if d.scheduled_at else None,
+            "report_status": d.report_status,
+            "created_at": d.created_at.isoformat(),
+        }
+        for d in [d for d in all_scoped_demos if d.report_status == "NEEDS_REPORT"][:10]
+    ]
+
+    # Personalized metrics for the current user
+    my_demos = [d for d in all_scoped_demos if d.owner_id == current_user.id]
+    my_metrics = {
+        "my_total_demos": len(my_demos),
+        "my_interested": len([d for d in my_demos if d.status in ("INTERESTED_NEXT_STEP", "INTERESTED")]),
+        "my_interested_demos": len([d for d in my_demos if d.status in ("INTERESTED_NEXT_STEP", "INTERESTED")]),
+        "my_pending": len([d for d in my_demos if d.status in ("PENDING", "REQUESTED", "SCHEDULED")]),
+        "my_pending_demos": len([d for d in my_demos if d.status in ("PENDING", "REQUESTED", "SCHEDULED")]),
+        "my_postponed": len([d for d in my_demos if d.status in ("POSTPONED", "RESCHEDULED")]),
+        "my_postponed_demos": len([d for d in my_demos if d.status in ("POSTPONED", "RESCHEDULED")]),
+        "my_not_interested": len([d for d in my_demos if d.status in ("NOT_INTERESTED", "LOST")]),
+        "my_not_interested_demos": len([d for d in my_demos if d.status in ("NOT_INTERESTED", "LOST")]),
+        "my_cancelled": len([d for d in my_demos if d.status in ("CANCELLED", "NO_SHOW")]),
+        "my_cancelled_demos": len([d for d in my_demos if d.status in ("CANCELLED", "NO_SHOW")]),
+        "my_needs_report": len([d for d in my_demos if d.report_status == "NEEDS_REPORT"]),
+        "my_demos_needing_reports": len([d for d in my_demos if d.report_status == "NEEDS_REPORT"]),
+        "my_upcoming_next_steps": len([d for d in my_demos if d.next_step_due_date and d.next_step_due_date >= now]),
+        "my_overdue_next_steps": len([d for d in my_demos if d.next_step_due_date and d.next_step_due_date < now and d.status not in ("CANCELLED", "NOT_INTERESTED")]),
+    }
+
     return {
         "data": {
             "period": {
@@ -663,7 +801,18 @@ async def management_dashboard(
                 "whatsapp": total_whatsapp,
                 "demo_agreed": demos_agreed,
                 "demo_completed": demos_completed,
-                "demo_cancelled": demos_cancelled,
+                "demo_cancelled": demos_cancelled_stage,
+                "demos_total": demos_total,
+                "demos_interested": demos_interested,
+                "demos_pending": demos_pending,
+                "demos_postponed": demos_postponed,
+                "demos_not_interested": demos_not_interested,
+                "demos_cancelled_status": demos_cancelled,
+                "demos_needs_report": demos_needs_report,
+                "demos_report_complete": demos_report_complete,
+                "demos_historical": demos_historical,
+                "upcoming_next_steps": upcoming_next_steps,
+                "overdue_next_steps": overdue_next_steps,
                 "follow_ups": total_follow_ups,
                 "pending_follow_ups": pending_follow_ups,
                 "overdue_follow_ups": overdue_follow_ups,
@@ -703,6 +852,16 @@ async def management_dashboard(
             },
             "user_performance": user_breakdown,
             "manager_performance": manager_breakdown,
+            "upcoming_demos": upcoming_demos_list,
+            "demos_needing_reports": demos_needing_reports_list,
+            "recent_contact_updates": recent_contact_updates,
+            "my_metrics": my_metrics,
+            "demos_total": demos_total,
+            "demos_interested": demos_interested,
+            "demos_pending": demos_pending,
+            "demos_postponed": demos_postponed,
+            "demos_needs_report": demos_needs_report,
+            "is_manager": current_user.is_manager_or_above,
         }
     }
 

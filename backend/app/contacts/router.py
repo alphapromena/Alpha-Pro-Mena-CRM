@@ -43,7 +43,9 @@ class ContactUpdateBody(BaseModel):
     secondary_email: Optional[str] = None
     secondary_phone: Optional[str] = None
     company_id: Optional[str] = None
+    company_name: Optional[str] = None
     position: Optional[str] = None
+    job_title: Optional[str] = None
     department: Optional[str] = None
     country: Optional[str] = None
     industry: Optional[str] = None
@@ -51,6 +53,8 @@ class ContactUpdateBody(BaseModel):
     tags: Optional[str] = None
     notes: Optional[str] = None
     priority: Optional[str] = None
+    owner_id: Optional[str] = None
+    status: Optional[str] = None
 
 
 class StatusUpdateBody(BaseModel):
@@ -159,6 +163,7 @@ def _contact_to_dict(c: Contact) -> Dict[str, Any]:
         "country": get_val("country"),
         "industry": get_val("industry"),
         "position": get_val("position"),
+        "job_title": get_val("position"),
         "department": get_val("department"),
         "source": get_val("source"),
         "tags": get_val("tags"),

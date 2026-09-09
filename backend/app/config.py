@@ -62,7 +62,7 @@ def normalize_database_url(url: str) -> Tuple[str, bool]:
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=(str(BACKEND_DIR / ".env"), ".env"),
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
@@ -93,6 +93,24 @@ class Settings(BaseSettings):
     # Rate Limiting
     rate_limit_login: str = "5/minute"
     rate_limit_default: str = "200/minute"
+
+    # Company Email & Identity
+    company_email_domain: str = "alphapromena.com"
+
+    # Email & SMTP Service
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from_email: str = "noreply@alphapromena.com"
+    smtp_use_tls: bool = True
+    verification_token_expire_hours: int = 24
+    password_reset_token_expire_hours: int = 2
+    verification_resend_cooldown_seconds: int = 60
+
+    @property
+    def smtp_configured(self) -> bool:
+        return bool(self.smtp_host and self.smtp_port)
 
     # CORS
     cors_origins: str = "http://localhost:5173"

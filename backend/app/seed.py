@@ -37,15 +37,16 @@ async def seed_data():
     async with engine.begin() as conn:
         # Create all tables if not exist (convenient for local sqlite/postgres before alembic)
         await conn.run_sync(Base.metadata.create_all)
+        domain = (settings.company_email_domain or "alphapromena.com").strip().lower()
 
     async with AsyncSessionLocal() as db:
-        # Check if already seeded (using the real Qusai account as sentinel)
-        admin_check = (await db.execute(select(User).where(User.email == "qusai@alphapromena.com"))).scalar_one_or_none()
+        # Check if already seeded
+        admin_check = (await db.execute(select(User).where(User.normalized_email == normalize_email(f"qusai@{domain}")))).scalar_one_or_none()
         if admin_check:
             logger.info("seed.already_seeded")
             return
 
-        logger.info("seed.starting")
+        logger.info("seed.starting", company_domain=domain)
 
         # 1. Teams
         team_mena = Team(name="MENA Enterprise Sales", description="High-tier enterprise accounts across UAE, Saudi, Qatar")
@@ -54,8 +55,7 @@ async def seed_data():
         db.add_all([team_mena, team_saudi, team_gov])
         await db.flush()
 
-        # 2. Users
-        # ── System / Dev account (kept for development access)
+        # 2. Users (7 Team Identities + Dev Admin)
         admin_password = settings.admin_password or secrets.token_urlsafe(12)
         dev_admin = User(
             email=settings.admin_email,
@@ -65,104 +65,132 @@ async def seed_data():
             password_hash=hash_password(admin_password),
             role=UserRole.TEAM_LEAD,
             lead_capacity=1000,
+            email_verified=True,
+            must_change_password=False,
         )
 
-        # ── Real Team Lead
+        # ── 7 Team Members with unique activation passwords and forced password change
         tmp_qusai = secrets.token_urlsafe(12)
         qusai = User(
-            email="qusai@alphapromena.com",
-            normalized_email=normalize_email("qusai@alphapromena.com"),
+            email=f"qusai@{domain}",
+            normalized_email=normalize_email(f"qusai@{domain}"),
             first_name="Qusai",
             last_name="Al-Saleh",
             password_hash=hash_password(tmp_qusai),
             role=UserRole.TEAM_LEAD,
             lead_capacity=1000,
+            must_change_password=True,
+            email_verified=False,
         )
 
-        # ── Real Manager placeholder (uses dev admin email pattern for now)
-        tmp_manager = secrets.token_urlsafe(12)
-        manager = User(
-            email="manager@alphapro.com",
-            normalized_email=normalize_email("manager@alphapro.com"),
-            first_name="Nour",
-            last_name="Haddad",
-            password_hash=hash_password(tmp_manager),
+        tmp_abdallah = secrets.token_urlsafe(12)
+        abdallah = User(
+            email=f"abdallah@{domain}",
+            normalized_email=normalize_email(f"abdallah@{domain}"),
+            first_name="Abdallah",
+            last_name="",
+            password_hash=hash_password(tmp_abdallah),
             role=UserRole.MANAGER,
-            team_id=None,  # set after team flush
             lead_capacity=800,
+            must_change_password=True,
+            email_verified=False,
+        )
+        manager = abdallah  # alias for backward compatibility in seed script
+
+        tmp_aseel = secrets.token_urlsafe(12)
+        aseel = User(
+            email=f"aseel@{domain}",
+            normalized_email=normalize_email(f"aseel@{domain}"),
+            first_name="Aseel",
+            last_name="",
+            password_hash=hash_password(tmp_aseel),
+            role=UserRole.DATA_OPS,
+            lead_capacity=600,
+            must_change_password=True,
+            email_verified=False,
         )
 
-        # ── 4 Real Sales Users
         tmp_saleh = secrets.token_urlsafe(12)
         saleh = User(
-            email="saleh@alphapromena.com",
-            normalized_email=normalize_email("saleh@alphapromena.com"),
+            email=f"saleh@{domain}",
+            normalized_email=normalize_email(f"saleh@{domain}"),
             first_name="Saleh",
             last_name="",
             password_hash=hash_password(tmp_saleh),
             role=UserRole.USER,
             lead_capacity=500,
+            must_change_password=True,
+            email_verified=False,
         )
 
         tmp_hassan = secrets.token_urlsafe(12)
         hassan = User(
-            email="hassan@alphapromena.com",
-            normalized_email=normalize_email("hassan@alphapromena.com"),
+            email=f"hassan@{domain}",
+            normalized_email=normalize_email(f"hassan@{domain}"),
             first_name="Hassan",
             last_name="",
             password_hash=hash_password(tmp_hassan),
             role=UserRole.USER,
             lead_capacity=500,
+            must_change_password=True,
+            email_verified=False,
         )
 
         tmp_amin = secrets.token_urlsafe(12)
         amin = User(
-            email="amin@alphapromena.com",
-            normalized_email=normalize_email("amin@alphapromena.com"),
+            email=f"amin@{domain}",
+            normalized_email=normalize_email(f"amin@{domain}"),
             first_name="Amin",
             last_name="",
             password_hash=hash_password(tmp_amin),
             role=UserRole.USER,
             lead_capacity=500,
+            must_change_password=True,
+            email_verified=False,
         )
 
         tmp_ghaida = secrets.token_urlsafe(12)
         ghaida = User(
-            email="ghaida@alphapromena.com",
-            normalized_email=normalize_email("ghaida@alphapromena.com"),
+            email=f"ghaida@{domain}",
+            normalized_email=normalize_email(f"ghaida@{domain}"),
             first_name="Ghaida",
             last_name="",
             password_hash=hash_password(tmp_ghaida),
             role=UserRole.USER,
             lead_capacity=500,
+            must_change_password=True,
+            email_verified=False,
         )
 
-        db.add_all([dev_admin, qusai, manager, saleh, hassan, amin, ghaida])
+        db.add_all([dev_admin, qusai, abdallah, aseel, saleh, hassan, amin, ghaida])
         await db.flush()
 
-        team_mena.manager_id = manager.id
+        team_mena.manager_id = abdallah.id
         team_saudi.manager_id = qusai.id
-        team_gov.manager_id = manager.id
-        manager.team_id = team_mena.id
+        team_gov.manager_id = abdallah.id
+        abdallah.team_id = team_mena.id
+        qusai.team_id = team_saudi.id
         saleh.team_id = team_saudi.id
         hassan.team_id = team_mena.id
         amin.team_id = team_mena.id
         ghaida.team_id = team_gov.id
-        db.add_all([team_mena, team_saudi, team_gov, manager, saleh, hassan, amin, ghaida])
+        aseel.team_id = team_mena.id
+        db.add_all([team_mena, team_saudi, team_gov, abdallah, qusai, saleh, hassan, amin, ghaida, aseel])
         await db.flush()
 
         # Print temporary credentials to stdout (save these — they are not stored)
-        logger.info("\n" + "="*60)
-        logger.info("SEED CREDENTIALS — SAVE THESE (shown once only)")
-        logger.info("="*60)
-        logger.info(f"  qusai@alphapromena.com   : {tmp_qusai}")
-        logger.info(f"  saleh@alphapromena.com   : {tmp_saleh}")
-        logger.info(f"  hassan@alphapromena.com  : {tmp_hassan}")
-        logger.info(f"  amin@alphapromena.com    : {tmp_amin}")
-        logger.info(f"  ghaida@alphapromena.com  : {tmp_ghaida}")
-        logger.info(f"  {settings.admin_email:<25}: {admin_password}" + ("" if settings.admin_password else " (generated)"))
-        logger.info(f"  manager@alphapro.com     : {tmp_manager} (generated)")
-        logger.info("="*60 + "\n")
+        logger.info("\n" + "="*70)
+        logger.info("SEED CREDENTIALS — 7 TEAM MEMBERS (Forced password change on first login)")
+        logger.info("="*70)
+        logger.info(f"  qusai@{domain:<25}: {tmp_qusai} (TEAM LEAD)")
+        logger.info(f"  abdallah@{domain:<25}: {tmp_abdallah} (MANAGER)")
+        logger.info(f"  aseel@{domain:<25}: {tmp_aseel} (DATA OPS)")
+        logger.info(f"  saleh@{domain:<25}: {tmp_saleh} (SALES USER)")
+        logger.info(f"  hassan@{domain:<25}: {tmp_hassan} (SALES USER)")
+        logger.info(f"  amin@{domain:<25}: {tmp_amin} (SALES USER)")
+        logger.info(f"  ghaida@{domain:<25}: {tmp_ghaida} (SALES USER)")
+        logger.info(f"  {settings.admin_email:<33}: {admin_password} (DEV ADMIN)")
+        logger.info("="*70 + "\n")
 
         # 3. Default Automation Rules
         rule_no_answer = AutomationRule(
@@ -375,12 +403,82 @@ async def seed_data():
         db.add(na1)
 
         # 9. Demos & Opportunities
-        demo1 = Demo(
+        from app.models.demo import DemoStatus, DemoReportStatus
+
+        demo_pending = Demo(
             contact_id=c3.id, company_id=comp_enbd.id, owner_id=amin.id,
-            stage=DemoStage.SCHEDULED, scheduled_at=now + timedelta(days=2),
-            notes="Demo focus: High-volume outreach, analytics dashboard, automated call queues.",
+            stage=DemoStage.SCHEDULED, status=DemoStatus.PENDING,
+            scheduled_at=now + timedelta(days=2),
+            presenter="Amin", attendees="Tariq Mansoor (Head of Retail)",
+            topics_covered="Demonstration of automated recall scheduling and WhatsApp integration",
+            report_status=DemoReportStatus.NEEDS_REPORT,
+            notes="Demo scheduled via telephone outreach.",
         )
-        db.add(demo1)
+        demo_interested = Demo(
+            contact_id=c1.id, company_id=comp_alrajhi.id, owner_id=saleh.id,
+            stage=DemoStage.COMPLETED, status=DemoStatus.INTERESTED_NEXT_STEP,
+            scheduled_at=now - timedelta(days=1), completed_at=now - timedelta(days=1),
+            presenter="Saleh", attendees="Faisal Al-Otaibi (CTO), 2 IT Architects",
+            topics_covered="High-volume outreach, analytics dashboard, automated call queues.",
+            summary="Demonstrated real-time call logging, automated follow-up workflows, and custom analytics. CTO Faisal expressed high interest in Google Sheets sync and RBAC.",
+            result="Client confirmed requirement for 50 sales seats. Requested tailored commercial proposal by end of week.",
+            next_step="Submit formal enterprise pricing proposal and architecture deck",
+            next_step_due_date=now + timedelta(days=3),
+            report_status=DemoReportStatus.REPORT_COMPLETE,
+            created_by_id=saleh.id,
+        )
+        demo_historical = Demo(
+            contact_id=c2.id, company_id=comp_riyad.id, owner_id=saleh.id,
+            stage=DemoStage.COMPLETED, status=DemoStatus.INTERESTED_NEXT_STEP,
+            scheduled_at=now - timedelta(days=45), completed_at=now - timedelta(days=45),
+            historical_date=now - timedelta(days=45),
+            is_historical=True,
+            historical_source="Executive Sales Archive 2026",
+            presenter="Qusai", attendees="Noura Al-Shehri (VP Corporate Banking)",
+            topics_covered="Executive demonstration of core CRM architecture & team workload management.",
+            summary="Pre-CRM demonstration conducted at Riyad Bank Riyadh HQ. Evaluated enterprise compliance and security features.",
+            result="Favorable feedback. Pending procurement committee signoff.",
+            next_step="Follow up with procurement team for vendor onboarding",
+            next_step_due_date=now + timedelta(days=10),
+            report_status=DemoReportStatus.REPORT_COMPLETE,
+            created_by_id=qusai.id,
+        )
+        demo_postponed = Demo(
+            contact_id=c5.id, company_id=comp_stc.id, owner_id=saleh.id,
+            stage=DemoStage.RESCHEDULED, status=DemoStatus.POSTPONED,
+            scheduled_at=now - timedelta(days=2),
+            presenter="Saleh", attendees="Majed Al-Mutawa",
+            topics_covered="Enterprise scale & integration capabilities",
+            summary="Session was postponed prior to start due to client emergency maintenance window.",
+            reason="Client infrastructure outage forced IT leadership to postpone all vendor presentations.",
+            next_step="Reschedule demonstration for next Tuesday",
+            next_step_due_date=now + timedelta(days=5),
+            report_status=DemoReportStatus.REPORT_COMPLETE,
+            created_by_id=saleh.id,
+        )
+        demo_not_interested = Demo(
+            contact_id=c7_unassigned.id, company_id=comp_aramco.id, owner_id=saleh.id,
+            stage=DemoStage.COMPLETED, status=DemoStatus.NOT_INTERESTED,
+            scheduled_at=now - timedelta(days=10), completed_at=now - timedelta(days=10),
+            presenter="Saleh", attendees="Dr. Khalid Al-Ghamdi",
+            topics_covered="General CRM capabilities overview",
+            summary="Comprehensive product walk-through conducted for internal IT committee.",
+            result="Team decided to develop internal module instead of adopting external commercial SaaS.",
+            reason="Internal development policy mandates building custom extensions in-house.",
+            report_status=DemoReportStatus.REPORT_COMPLETE,
+            created_by_id=saleh.id,
+        )
+        demo_cancelled = Demo(
+            contact_id=c6_unassigned.id, company_id=comp_etisalat.id, owner_id=amin.id,
+            stage=DemoStage.CANCELLED, status=DemoStatus.CANCELLED,
+            scheduled_at=now - timedelta(days=3), cancelled_at=now - timedelta(days=3),
+            presenter="Amin", attendees="Rashid Al-Nuaimi",
+            summary="Demo was cancelled by prospect due to organizational budget freeze.",
+            reason="Fiscal year telecom enterprise procurement budget on hold until next quarter.",
+            report_status=DemoReportStatus.REPORT_COMPLETE,
+            created_by_id=amin.id,
+        )
+        db.add_all([demo_pending, demo_interested, demo_historical, demo_postponed, demo_not_interested, demo_cancelled])
 
         opp1 = Opportunity(
             title="Al Rajhi Capital — Enterprise CRM Implementation",
