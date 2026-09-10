@@ -97,7 +97,7 @@ class Settings(BaseSettings):
     # Company Email & Identity
     company_email_domain: str = "alphapromena.com"
 
-    # Email & SMTP Service
+    # Email & SMTP Service (legacy — used if RESEND_API_KEY is not set)
     smtp_host: str = ""
     smtp_port: int = 587
     smtp_user: str = ""
@@ -108,9 +108,22 @@ class Settings(BaseSettings):
     password_reset_token_expire_hours: int = 2
     verification_resend_cooldown_seconds: int = 60
 
+    # Resend transactional email (preferred over SMTP when set)
+    resend_api_key: str = ""
+    resend_from_email: str = "noreply@alphapromena.com"
+
+    @property
+    def resend_configured(self) -> bool:
+        return bool(self.resend_api_key)
+
     @property
     def smtp_configured(self) -> bool:
         return bool(self.smtp_host and self.smtp_port)
+
+    @property
+    def email_configured(self) -> bool:
+        """True when any real email backend is ready to send."""
+        return self.resend_configured or self.smtp_configured
 
     # CORS
     cors_origins: str = "http://localhost:5173"

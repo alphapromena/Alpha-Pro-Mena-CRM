@@ -1,9 +1,14 @@
-"""
+﻿"""
 Email delivery service.
 Handles verification emails and password reset emails.
-In development (or when SMTP is unconfigured), stores messages in an in-memory dev mailbox
-and logs to logger so tests and local dev work without a live SMTP server.
-In production with SMTP configured, sends via smtplib.
+
+Priority:
+  1. Resend API  (RESEND_API_KEY is set)  — preferred, reliable transactional delivery
+  2. SMTP        (SMTP_HOST is set)       — legacy fallback
+  3. Dev mailbox (nothing configured)    — local dev / test, no real email sent
+
+In development or test mode the dev mailbox is always used regardless of
+which backend is configured, so real emails are never sent during CI.
 """
 import smtplib
 from email.mime.multipart import MIMEMultipart
@@ -39,7 +44,9 @@ async def send_email(
     meta: Optional[Dict[str, Any]] = None,
 ) -> bool:
     """
-    Send an email. Dispatches to SMTP if configured, otherwise records in local dev mailbox.
+    Send an email.
+    Routes to Resend → SMTP → dev mailbox in priority order.
+    Dev/test environments always use the dev mailbox.
     """
     msg_record = {
         "to": to_email,
@@ -52,7 +59,8 @@ async def send_email(
         "meta": meta or {},
     }
 
-    if not settings.smtp_configured or settings.app_env in ("development", "test"):
+    # Always use dev mailbox in dev/test — never send real emails during CI
+    if not settings.email_configured or settings.app_env in ("development", "test"):
         _DEV_MAILBOX.append(msg_record)
         if len(_DEV_MAILBOX) > 100:
             _DEV_MAILBOX.pop(0)
@@ -64,18 +72,66 @@ async def send_email(
         )
         return True
 
-    # Real SMTP send in staging/production
+    # ── Resend (preferred) ───────────────────────────────────────────────────
+    if settings.resend_configured:
+        return await _send_via_resend(to_email, subject, text_content, html_content, meta)
+
+    # ── SMTP (legacy fallback) ───────────────────────────────────────────────
+    return await _send_via_smtp(to_email, subject, text_content, html_content, meta)
+
+
+async def _send_via_resend(
+    to_email: str,
+    subject: str,
+    text_content: str,
+    html_content: Optional[str],
+    meta: Optional[Dict[str, Any]],
+) -> bool:
+    """Send via Resend API."""
+    try:
+        import resend  # lazy import — only needed when Resend is configured
+
+        resend.api_key = settings.resend_api_key
+
+        params: Dict[str, Any] = {
+            "from": settings.resend_from_email,
+            "to": [to_email],
+            "subject": subject,
+            "text": text_content,
+        }
+        if html_content:
+            params["html"] = html_content
+
+        resend.Emails.send(params)
+        logger.info(
+            "email.resend_sent",
+            to=to_email,
+            subject=subject,
+            action=meta.get("action") if meta else None,
+        )
+        return True
+    except Exception as exc:
+        logger.error("email.resend_failed", to=to_email, error=str(exc))
+        return False
+
+
+async def _send_via_smtp(
+    to_email: str,
+    subject: str,
+    text_content: str,
+    html_content: Optional[str],
+    meta: Optional[Dict[str, Any]],
+) -> bool:
+    """Send via raw SMTP (legacy fallback)."""
     try:
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
         msg["From"] = settings.smtp_from_email
         msg["To"] = to_email
 
-        part1 = MIMEText(text_content, "plain", "utf-8")
-        msg.attach(part1)
+        msg.attach(MIMEText(text_content, "plain", "utf-8"))
         if html_content:
-            part2 = MIMEText(html_content, "html", "utf-8")
-            msg.attach(part2)
+            msg.attach(MIMEText(html_content, "html", "utf-8"))
 
         server = smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=10)
         if settings.smtp_use_tls:
@@ -86,8 +142,8 @@ async def send_email(
         server.quit()
         logger.info("email.smtp_sent", to=to_email, subject=subject)
         return True
-    except Exception as e:
-        logger.error("email.smtp_failed", to=to_email, error=str(e))
+    except Exception as exc:
+        logger.error("email.smtp_failed", to=to_email, error=str(exc))
         return False
 
 
