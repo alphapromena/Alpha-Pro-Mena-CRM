@@ -104,7 +104,12 @@ class Settings(BaseSettings):
     resend_api_key: str = ""
     email_from: str = ""
 
-    # Email & SMTP Service
+    # Accepted as an alias for EMAIL_FROM. The Resend SDK integration on main shipped
+    # this name and it is already set in the Vercel project, so it keeps working;
+    # EMAIL_FROM wins when both are present.
+    resend_from_email: str = ""
+
+    # Email & SMTP Service (legacy — used only when EMAIL_PROVIDER selects it)
     smtp_host: str = ""
     smtp_port: int = 587
     smtp_user: str = ""
@@ -121,8 +126,13 @@ class Settings(BaseSettings):
 
     @property
     def sender_address(self) -> str:
-        """The From address, preferring EMAIL_FROM over the legacy SMTP-specific name."""
-        return self.email_from or self.smtp_from_email
+        """
+        The From address.
+
+        EMAIL_FROM wins, then the RESEND_FROM_EMAIL alias, then the legacy
+        SMTP-specific name.
+        """
+        return self.email_from or self.resend_from_email or self.smtp_from_email
 
     @property
     def resend_configured(self) -> bool:
@@ -155,6 +165,11 @@ class Settings(BaseSettings):
         if provider == "smtp":
             return self.smtp_configured
         return False
+
+    @property
+    def email_configured(self) -> bool:
+        """Compatibility alias for the name introduced by the Resend SDK integration."""
+        return self.email_delivery_available
 
     # CORS
     cors_origins: str = "http://localhost:5173"

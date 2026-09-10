@@ -66,6 +66,32 @@ def test_email_from_takes_precedence_over_legacy_smtp_from():
     assert s.sender_address == "new@example.com"
 
 
+def test_resend_from_email_alias_is_accepted():
+    """
+    RESEND_FROM_EMAIL is the name the Resend SDK integration on main shipped, and it
+    is already set in the Vercel project. It must keep working as an alias.
+    """
+    s = _settings(app_env="development", resend_from_email="alias@example.com")
+    assert s.sender_address == "alias@example.com"
+
+
+def test_email_from_wins_over_the_resend_alias():
+    s = _settings(
+        app_env="development",
+        email_from="primary@example.com",
+        resend_from_email="alias@example.com",
+    )
+    assert s.sender_address == "primary@example.com"
+
+
+def test_email_configured_alias_tracks_delivery_availability():
+    """The property name from the SDK integration still resolves."""
+    configured = _settings(app_env="development", resend_api_key="re_test",
+                           email_from="no-reply@example.com")
+    assert configured.email_configured is True
+    assert _settings(app_env="development").email_configured is False
+
+
 def test_sender_falls_back_to_smtp_from_email():
     s = _settings(app_env="development", smtp_from_email="old@example.com")
     assert s.sender_address == "old@example.com"
