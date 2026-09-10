@@ -347,7 +347,7 @@ async def run_import(
     report = ImportReport()
 
     # ── Step 1: Intra-batch dedup ─────────────────────────────────────────
-    unique_rows, intra_dups = deduplicate(all_rows)
+    unique_rows, intra_dups = deduplicate(all_rows, report=report)
     report.total_intra_duplicates = intra_dups
 
     # ── Step 2: Load DB snapshot (all contacts incl. legacy without key) ──
