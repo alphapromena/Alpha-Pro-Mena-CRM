@@ -7,7 +7,7 @@ import asyncio
 import traceback
 from typing import Optional, List, Dict, Any
 import structlog
-from sqlalchemy import text, select
+from sqlalchemy import text, select, bindparam
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -16,6 +16,17 @@ from app.models.user import User, UserRole, Team
 
 settings = get_settings()
 logger = structlog.get_logger(__name__)
+
+# The Alembic revision whose schema the DDL in this module reproduces.
+# Keep in sync with backend/alembic/versions/ when new revisions are added.
+AUTO_MIGRATE_REVISION = "c5a1f8e23901"
+
+# Revisions strictly OLDER than AUTO_MIGRATE_REVISION. A database stamped with
+# one of these really has been brought up to AUTO_MIGRATE_REVISION by the DDL
+# below, so advancing its stamp is correct. Any other value -- in particular a
+# revision newer than AUTO_MIGRATE_REVISION -- is left untouched so a database
+# that has moved ahead is never stamped backwards.
+SUPERSEDED_REVISIONS = ("b6d7df55ae73",)
 
 
 def _get_bootstrap_password() -> str:
@@ -191,16 +202,53 @@ async def _migrate_postgresql(session: AsyncSession) -> None:
     """))
 
     # ── 3. alembic_version stamp ────────────────────────────────────────────
-    await session.execute(text("""
-    DO $$
-    BEGIN
-        CREATE TABLE IF NOT EXISTS alembic_version (version_num VARCHAR(32) NOT NULL PRIMARY KEY);
-        INSERT INTO alembic_version (version_num) VALUES ('c5a1f8e23901')
-            ON CONFLICT DO NOTHING;
-        UPDATE alembic_version SET version_num = 'c5a1f8e23901'
-            WHERE version_num != 'c5a1f8e23901';
-    END $$;
-    """))
+    await _stamp_alembic_version(session)
+
+
+async def _stamp_alembic_version(session: AsyncSession) -> None:
+    """
+    Record that the schema above has been applied, without ever moving the
+    Alembic stamp backwards.
+
+    Two cases are safe to write:
+
+    * the version table is empty, a fresh database adopting this schema;
+    * the table holds a revision this module supersedes, meaning the DDL above
+      has genuinely brought that database up to AUTO_MIGRATE_REVISION.
+
+    Any other stamp is left alone. This previously reset the stamp to
+    AUTO_MIGRATE_REVISION unconditionally, so a database already upgraded past
+    that revision was rolled back on every process start and Alembic then tried
+    to replay migrations that had already run.
+    """
+    await session.execute(text(
+        "CREATE TABLE IF NOT EXISTS alembic_version ("
+        "version_num VARCHAR(32) NOT NULL PRIMARY KEY)"
+    ))
+
+    # Fresh database: adopt the revision this module reproduces.
+    await session.execute(
+        text(
+            "INSERT INTO alembic_version (version_num) "
+            "SELECT :target "
+            "WHERE NOT EXISTS (SELECT 1 FROM alembic_version)"
+        ),
+        {"target": AUTO_MIGRATE_REVISION},
+    )
+
+    # Known-older stamp: advance it. Newer or unrecognised stamps stay as they are.
+    if SUPERSEDED_REVISIONS:
+        stmt = text(
+            "UPDATE alembic_version SET version_num = :target "
+            "WHERE version_num IN :superseded"
+        ).bindparams(bindparam("superseded", expanding=True))
+        await session.execute(
+            stmt,
+            {
+                "target": AUTO_MIGRATE_REVISION,
+                "superseded": list(SUPERSEDED_REVISIONS),
+            },
+        )
 
 
 # ─── SQLite DDL (local dev only) ───────────────────────────────────────────────
