@@ -272,6 +272,29 @@ coercion helper.
 
 ---
 
-## Open question for the maintainer
+## Resolved question
 
-Fixing H5 means deleting the quick-login buttons from the login page, which is a visible product change beyond the flows in scope. C3, the pre-filled password, is being fixed regardless, because emptying a form field is not a feature change and the credential is exposed. The roster buttons are held pending a decision.
+H5 was raised for a decision because deleting the quick-login buttons is a visible
+product change beyond the flows in scope. The maintainer chose full removal, and it is
+done: the roster array, the button rows and their handler are gone, confirmed against a
+production build.
+
+C3, the pre-filled password, was fixed regardless, because emptying a form field is not
+a feature change and the credential was already exposed.
+
+One deliberate behaviour change inside the flows in scope was also confirmed. A repeat
+forgot-password or resend-verification request inside the cooldown now returns the same
+neutral message as the first rather than a 429 naming the remaining seconds. The email
+is still suppressed. The countdown answered only for addresses that exist, which is what
+made it an oracle.
+
+## Still open
+
+**H3, migrations in the request path**, is unchanged. `get_db` still calls the migration
+entrypoint on every request. The per-process flag limits the cost, but serverless
+processes are numerous and short-lived, so a large share of requests still carry the
+exposure. Moving it to startup and the admin endpoint is the right fix and is a larger
+behavioural change than this branch should carry.
+
+**The credential exposed by C3 has been served publicly** and must be rotated. Removing
+it from the source does not undo the distribution.
