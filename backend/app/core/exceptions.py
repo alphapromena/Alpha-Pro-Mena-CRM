@@ -68,3 +68,15 @@ class AccountLockedError(AppError):
     status_code = 423
     error_code = "ACCOUNT_LOCKED"
     message = "Account is temporarily locked due to too many failed login attempts."
+
+
+class EmailDeliveryError(AppError):
+    """
+    Raised when an email could not be handed to a real provider.
+
+    This exists so a delivery failure reaches the caller as an explicit 503 instead
+    of being reported as success, which is what the mock transport used to do.
+    """
+    status_code = 503
+    error_code = "EMAIL_DELIVERY_FAILED"
+    message = "Email could not be sent. Please try again shortly or contact your administrator."

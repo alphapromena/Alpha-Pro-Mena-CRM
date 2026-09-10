@@ -2,6 +2,7 @@
 Authentication service — login, logout, token refresh, account lockout,
 email verification, forced password activation, and password reset.
 """
+import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -11,7 +12,14 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import AccountLockedError, UnauthorizedError, ValidationError, NotFoundError, RateLimitError
+from app.core.exceptions import (
+    AccountLockedError,
+    EmailDeliveryError,
+    NotFoundError,
+    RateLimitError,
+    UnauthorizedError,
+    ValidationError,
+)
 from app.core.security import (
     create_access_token,
     create_refresh_token,
@@ -166,7 +174,7 @@ class AuthService:
         if current_password and not verify_password(current_password, user.password_hash):
             raise UnauthorizedError("Current password is incorrect.")
 
-        if new_password.strip() == "123456789":
+        if self._is_bootstrap_password(new_password):
             raise ValidationError("New password cannot be the temporary bootstrap password.")
 
         if verify_password(new_password, user.password_hash):
@@ -207,12 +215,32 @@ class AuthService:
         self.db.add(user)
         await self.db.flush()
 
-        await send_verification_email(
+        result = await send_verification_email(
             to_email=user.email,
             recipient_name=user.first_name,
             token=raw_token,
         )
-        logger.info("auth.verification_sent", user_id=str(user.id), email=user.email)
+        if not result.ok:
+            # Surfaced to the caller as a 503. The surrounding transaction is rolled
+            # back, so the undelivered token is not left on the account and the resend
+            # cooldown is not started by a send that never happened.
+            logger.error(
+                "auth.verification_send_failed",
+                user_id=str(user.id),
+                provider=result.provider,
+                error=result.error,
+            )
+            raise EmailDeliveryError(
+                "We could not send the verification email. Please try again shortly."
+            )
+
+        logger.info(
+            "auth.verification_sent",
+            user_id=str(user.id),
+            email=user.email,
+            provider=result.provider,
+            message_id=result.message_id,
+        )
         return raw_token
 
     async def verify_email(self, token: str, email: Optional[str] = None) -> User:
@@ -338,11 +366,21 @@ class AuthService:
         self.db.add(user)
         await self.db.flush()
 
-        await send_password_reset_email(
+        result = await send_password_reset_email(
             to_email=user.email,
             recipient_name=user.first_name,
             token=raw_token,
         )
+        if not result.ok:
+            logger.error(
+                "auth.password_reset_send_failed",
+                user_id=str(user.id),
+                provider=result.provider,
+                error=result.error,
+            )
+            raise EmailDeliveryError(
+                "We could not send the password reset email. Please try again shortly."
+            )
 
         await self.audit.log(
             action="user.password_reset_requested",
@@ -350,14 +388,19 @@ class AuthService:
             actor_id=user.id,
             entity_id=user.id,
         )
-        logger.info("auth.password_reset_requested", user_id=str(user.id))
+        logger.info(
+            "auth.password_reset_requested",
+            user_id=str(user.id),
+            provider=result.provider,
+            message_id=result.message_id,
+        )
 
     async def reset_password_with_token(self, token: str, new_password: str) -> User:
         """Reset password using one-time token."""
         if not token or not token.strip():
             raise ValidationError("Reset token is required.")
 
-        if new_password.strip() == "123456789":
+        if self._is_bootstrap_password(new_password):
             raise ValidationError("New password cannot be the temporary bootstrap password.")
 
         is_strong, err_msg = validate_password_strength(new_password)
@@ -408,6 +451,21 @@ class AuthService:
         )
         logger.info("auth.password_reset_completed", user_id=str(user.id))
         return user
+
+    @staticmethod
+    def _is_bootstrap_password(candidate: str) -> bool:
+        """
+        True when the candidate equals the configured bootstrap password.
+
+        This used to compare against a hardcoded literal, which stopped matching
+        anything once the bootstrap password moved to the BOOTSTRAP_PASSWORD
+        environment variable, so the guard silently protected nothing.
+        """
+        configured = (getattr(settings, "bootstrap_password", "") or "").strip()
+        if not configured:
+            return False
+        return secrets.compare_digest(candidate.strip(), configured)
+
 
     # ── Internal lockout helpers ──────────────────────────────────────────────
 

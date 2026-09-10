@@ -97,6 +97,13 @@ class Settings(BaseSettings):
     # Company Email & Identity
     company_email_domain: str = "alphapromena.com"
 
+    # Email delivery
+    # EMAIL_PROVIDER selects the transport explicitly: "resend", "smtp" or "mock".
+    # Left empty it is inferred from whichever provider has credentials.
+    email_provider: str = ""
+    resend_api_key: str = ""
+    email_from: str = ""
+
     # Email & SMTP Service
     smtp_host: str = ""
     smtp_port: int = 587
@@ -111,6 +118,43 @@ class Settings(BaseSettings):
     @property
     def smtp_configured(self) -> bool:
         return bool(self.smtp_host and self.smtp_port)
+
+    @property
+    def sender_address(self) -> str:
+        """The From address, preferring EMAIL_FROM over the legacy SMTP-specific name."""
+        return self.email_from or self.smtp_from_email
+
+    @property
+    def resend_configured(self) -> bool:
+        return bool(self.resend_api_key and self.sender_address)
+
+    @property
+    def resolved_email_provider(self) -> str:
+        """
+        The transport that will actually be used.
+
+        An explicit EMAIL_PROVIDER always wins, so a misconfiguration surfaces as a
+        clear failure rather than a silent downgrade. With nothing set, the first
+        configured provider is chosen, and "mock" is the last resort.
+        """
+        explicit = (self.email_provider or "").strip().lower()
+        if explicit:
+            return explicit
+        if self.resend_configured:
+            return "resend"
+        if self.smtp_configured:
+            return "smtp"
+        return "mock"
+
+    @property
+    def email_delivery_available(self) -> bool:
+        """True when the resolved provider can actually deliver to a real inbox."""
+        provider = self.resolved_email_provider
+        if provider == "resend":
+            return self.resend_configured
+        if provider == "smtp":
+            return self.smtp_configured
+        return False
 
     # CORS
     cors_origins: str = "http://localhost:5173"
@@ -170,13 +214,46 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def _finalize(self) -> "Settings":
         self.database_url, self.database_pooled = normalize_database_url(self.database_url)
+        # A trailing slash here becomes a double slash in every email link.
+        self.frontend_url = (self.frontend_url or "").strip().rstrip("/")
         if self.app_env == "production":
             for name in ("app_secret_key", "jwt_secret_key"):
                 if len(getattr(self, name)) < 32:
                     raise ValueError(f"{name.upper()} must be at least 32 characters in production.")
             if self.database_url.startswith("sqlite"):
                 raise ValueError("SQLite is not supported in production. Set DATABASE_URL to PostgreSQL.")
+            self._validate_frontend_url()
+            if (self.email_provider or "").strip().lower() == "mock":
+                raise ValueError(
+                    "EMAIL_PROVIDER=mock is not allowed in production. The mock transport "
+                    "discards messages while reporting success. Set EMAIL_PROVIDER=resend "
+                    "with RESEND_API_KEY and EMAIL_FROM, or EMAIL_PROVIDER=smtp."
+                )
         return self
+
+    def _validate_frontend_url(self) -> None:
+        """
+        Every verification and password-reset link is built from FRONTEND_URL. If it is
+        left at its development default, those links point at the recipient's own
+        machine, so this is enforced at load time rather than discovered by a user.
+        """
+        raw = (self.frontend_url or "").strip()
+        if not raw:
+            raise ValueError(
+                "FRONTEND_URL must be set in production. Email verification and password "
+                "reset links are built from it."
+            )
+        parts = urlsplit(raw)
+        if parts.scheme != "https":
+            raise ValueError(
+                f"FRONTEND_URL must be an https:// URL in production, got {parts.scheme or 'no'} scheme."
+            )
+        host = (parts.hostname or "").lower()
+        if host in ("localhost", "127.0.0.1", "0.0.0.0", "::1") or host.endswith(".local"):
+            raise ValueError(
+                f"FRONTEND_URL must not point at localhost in production, got '{host}'. "
+                "Set it to the public site origin."
+            )
 
 
 @lru_cache
