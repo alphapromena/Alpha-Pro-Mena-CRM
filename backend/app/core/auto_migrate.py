@@ -191,14 +191,19 @@ async def _migrate_postgresql(session: AsyncSession) -> None:
     """))
 
     # ── 3. alembic_version stamp ────────────────────────────────────────────
+    # DELETE stale rows first, then INSERT idempotently.
+    # NEVER use UPDATE after INSERT-ON-CONFLICT: if the new head row was just
+    # inserted, a subsequent UPDATE trying to rename the old row to the same
+    # value triggers a PK violation and rolls back the entire DO $$ block,
+    # which means every ALTER TABLE above also rolls back. This was the root
+    # cause of "column users.must_change_password does not exist" in production.
     await session.execute(text("""
     DO $$
     BEGIN
         CREATE TABLE IF NOT EXISTS alembic_version (version_num VARCHAR(32) NOT NULL PRIMARY KEY);
+        DELETE FROM alembic_version WHERE version_num != 'c5a1f8e23901';
         INSERT INTO alembic_version (version_num) VALUES ('c5a1f8e23901')
             ON CONFLICT DO NOTHING;
-        UPDATE alembic_version SET version_num = 'c5a1f8e23901'
-            WHERE version_num != 'c5a1f8e23901';
     END $$;
     """))
 
