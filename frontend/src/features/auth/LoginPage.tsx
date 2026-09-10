@@ -60,7 +60,14 @@ export const LoginPage: React.FC = () => {
         return;
       }
       if (res?.email_verified === false || currentUser?.email_verified === false) {
-        navigate('/verify-email');
+        // Carry whether the login actually dispatched a code, and to which address,
+        // so the verify page can say so instead of asking for a token from nowhere.
+        navigate('/verify-email', {
+          state: {
+            verificationSent: res?.verification_sent === true,
+            email: currentUser?.email || email,
+          },
+        });
         return;
       }
       if (currentUser?.role === 'DATA_OPS') {
