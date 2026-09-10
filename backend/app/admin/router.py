@@ -5,11 +5,14 @@ import uuid
 import math
 import json
 from typing import List, Optional, Dict, Any
-from fastapi import APIRouter, Depends, Query, Body, UploadFile, File, Form
+import structlog
+from fastapi import APIRouter, Depends, HTTPException, Query, Body, Request, UploadFile, File, Form
 from sqlalchemy import select, func, or_, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from pydantic import BaseModel
+
+logger = structlog.get_logger(__name__)
 
 from app.auth.dependencies import require_admin, require_manager_or_above, require_data_ops_or_above
 from app.database import get_db
@@ -524,14 +527,60 @@ async def commit_lead_file_import(
 
 @router.post("/migrate")
 async def force_run_migrations(
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ):
     """
     Force-run all database schema migrations and bootstrap team accounts.
     Returns a detailed report of every step.
-    This endpoint is unauthenticated intentionally — it is idempotent and safe to call multiple times.
+
+    Protected by X-Migrate-Token header (must match MIGRATE_TOKEN env var).
+    Returns 404 when MIGRATE_TOKEN is not configured — the endpoint is
+    intentionally undiscoverable in that state.
+
     Call this once after every fresh deployment if login returns 500.
     """
+    from app.config import get_settings as _get_settings
     from app.core.auto_migrate import run_migrations_now
+
+    _settings = _get_settings()
+    configured_token = _settings.migrate_token or ""
+
+    caller_ip = request.client.host if request.client else "unknown"
+
+    if not configured_token:
+        # Token not configured — hide the endpoint entirely
+        logger.warning(
+            "admin.migrate.token_not_configured",
+            caller_ip=caller_ip,
+            hint="Set MIGRATE_TOKEN env var to enable this endpoint.",
+        )
+        raise HTTPException(status_code=404, detail="Not found.")
+
+    provided_token = request.headers.get("X-Migrate-Token", "")
+
+    if not provided_token or provided_token != configured_token:
+        logger.warning(
+            "admin.migrate.unauthorized",
+            caller_ip=caller_ip,
+            token_provided=bool(provided_token),
+        )
+        raise HTTPException(status_code=403, detail="Forbidden.")
+
+    logger.info("admin.migrate.started", caller_ip=caller_ip)
     result = await run_migrations_now(db)
-    return result
+    logger.info(
+        "admin.migrate.finished",
+        caller_ip=caller_ip,
+        success=result.get("success"),
+        steps=result.get("steps"),
+    )
+    # Never include raw tracebacks in HTTP response
+    safe_result = {
+        "success": result.get("success"),
+        "steps": result.get("steps"),
+    }
+    if not result.get("success"):
+        safe_result["error"] = result.get("exception_type", "MigrationError")
+    return safe_result
+
