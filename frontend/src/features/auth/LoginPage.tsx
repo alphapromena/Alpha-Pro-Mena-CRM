@@ -18,8 +18,11 @@ export const LoginPage: React.FC = () => {
   const { fetchMe, language, setLanguage } = useAuthStore();
   const { isRTL } = useTranslation();
 
-  const [email, setEmail] = useState('saleh@alphapromena.com');
-  const [password, setPassword] = useState('Sales123!');
+  // Start empty. These previously defaulted to a real employee's address and a
+  // working plaintext password, which shipped in the public bundle and arrived
+  // pre-filled on the live login form.
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 

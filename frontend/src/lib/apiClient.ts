@@ -10,8 +10,38 @@
 
 const API_BASE = '/api/v1';
 
-// Endpoints that must never trigger a refresh attempt
-const NO_REFRESH = ['/auth/login', '/auth/refresh', '/auth/logout'];
+// Endpoints that must never trigger a refresh attempt.
+//
+// /auth/me is here because it is the app's own "who am I" probe: a 401 from it
+// means there is no session, which is an answer, not a recoverable failure. Chasing
+// it with /auth/refresh produced the paired 401s seen on every anonymous page load.
+// The public auth endpoints are here for the same reason: a 401 from them is the
+// result, and refreshing a session that does not exist cannot change it.
+const NO_REFRESH = [
+  '/auth/login',
+  '/auth/refresh',
+  '/auth/logout',
+  '/auth/me',
+  '/auth/verify-email',
+  '/auth/resend-verification',
+  '/auth/forgot-password',
+  '/auth/reset-password',
+];
+
+/**
+ * Whether the browser holds a session hint.
+ *
+ * The session cookies are HttpOnly, so the app cannot read them. The backend also
+ * sets a non-secret `session_active` cookie alongside them, which is readable here
+ * and lets an anonymous load skip the auth probe entirely instead of learning the
+ * answer from a 401.
+ */
+export function hasSessionHint(): boolean {
+  if (typeof document === 'undefined') return false;
+  return document.cookie
+    .split(';')
+    .some((c) => c.trim().startsWith('session_active='));
+}
 
 export class ApiError extends Error {
   code: string;

@@ -74,31 +74,39 @@ class AuthService:
         candidate_hash = user.password_hash if user else dummy_password_hash()
         password_ok = verify_password(password, candidate_hash)
 
+        # Lockout is resolved before the credential result is acted on. Checking it
+        # afterwards turned the response into a password oracle: a locked account
+        # answered 401 for a wrong password but 423 for the right one, so an attacker
+        # who had already tripped the lockout could still confirm a correct guess.
+        if user and user.is_locked:
+            if user.locked_until and datetime.now(timezone.utc) < user.locked_until:
+                raise AccountLockedError(
+                    f"Account locked until {user.locked_until.strftime('%H:%M UTC')}."
+                )
+            # Lockout window has passed — clear it and continue with this attempt.
+            await self._reset_login_attempts(user)
+
         if not user or not password_ok:
             if user:
                 await self._record_failed_attempt(user)
             await self.audit.log(
                 action="user.login_failed",
                 entity_type="user",
+                entity_id=user.id if user else None,
                 actor_id=user.id if user else None,
                 ip_address=ip_address,
                 notes=f"Failed login attempt for {normalized}",
             )
             logger.warning("auth.login_failed", email=email, ip=ip_address)
+            # Commit before raising. The rejection below propagates into get_db, whose
+            # `except Exception: rollback()` would otherwise discard the attempt counter
+            # and the audit entry, leaving the lockout threshold permanently unreachable.
+            await self.db.commit()
             raise UnauthorizedError("Invalid email or password.")
 
         if not user.is_active:
             logger.warning("auth.inactive_user", user_id=str(user.id))
             raise UnauthorizedError("Account is inactive. Please contact your administrator.")
-
-        if user.is_locked:
-            if user.locked_until and datetime.now(timezone.utc) < user.locked_until:
-                raise AccountLockedError(
-                    f"Account locked until {user.locked_until.strftime('%H:%M UTC')}."
-                )
-            else:
-                # Lockout expired — reset
-                await self._reset_login_attempts(user)
 
         # Successful login
         await self._on_successful_login(user, ip_address)
@@ -305,6 +313,7 @@ class AuthService:
         if not user or user.email_verified:
             # Dummy timing balance
             dummy_password_hash()
+            self._assert_email_delivery_possible()
             logger.info("auth.resend_verification_noop", email=normalized)
             return
 
@@ -316,10 +325,15 @@ class AuthService:
             seconds_since = (now - v_sent).total_seconds()
             cooldown = settings.verification_resend_cooldown_seconds
             if seconds_since < cooldown:
-                remaining = max(1, int(cooldown - seconds_since))
-                raise RateLimitError(
-                    f"Please wait {remaining} seconds before requesting another verification email."
+                # Return the same neutral response an unknown address gets. Raising a
+                # 429 here answered only for addresses that exist and are unverified,
+                # which turned the cooldown into an account-existence oracle.
+                logger.info(
+                    "auth.resend_verification_cooldown",
+                    user_id=str(user.id),
+                    seconds_remaining=max(1, int(cooldown - seconds_since)),
                 )
+                return
 
         await self.create_and_send_verification(user)
         await self.audit.log(
@@ -343,6 +357,7 @@ class AuthService:
 
         if not user or not user.is_active:
             dummy_password_hash()
+            self._assert_email_delivery_possible()
             logger.info("auth.password_reset_noop", email=normalized)
             return
 
@@ -352,12 +367,16 @@ class AuthService:
             if r_sent.tzinfo is None:
                 r_sent = r_sent.replace(tzinfo=timezone.utc)
             seconds_since = (now - r_sent).total_seconds()
-            cooldown = 60
+            cooldown = settings.verification_resend_cooldown_seconds
             if seconds_since < cooldown:
-                remaining = max(1, int(cooldown - seconds_since))
-                raise RateLimitError(
-                    f"Please wait {remaining} seconds before requesting another reset email."
+                # Same reasoning as resend_verification: answering differently inside
+                # the cooldown window would confirm that the address is registered.
+                logger.info(
+                    "auth.password_reset_cooldown",
+                    user_id=str(user.id),
+                    seconds_remaining=max(1, int(cooldown - seconds_since)),
                 )
+                return
 
         raw_token = generate_secure_token()
         user.password_reset_token_hash = hash_token(raw_token)
@@ -451,6 +470,23 @@ class AuthService:
         )
         logger.info("auth.password_reset_completed", user_id=str(user.id))
         return user
+
+    @staticmethod
+    def _assert_email_delivery_possible() -> None:
+        """
+        Fail the same way for an unknown address as for a real one.
+
+        The endpoints that send mail answer with a neutral message so they do not
+        confirm which addresses exist. That guarantee only holds if a broken mail
+        configuration also fails identically on both paths, otherwise a 503 for real
+        accounts and a 200 for unknown ones becomes the oracle the neutral message
+        was meant to prevent.
+        """
+        if settings.app_env == "production" and not settings.email_delivery_available:
+            raise EmailDeliveryError(
+                "Email delivery is not configured on this deployment. "
+                "Set EMAIL_PROVIDER together with the matching credentials."
+            )
 
     @staticmethod
     def _is_bootstrap_password(candidate: str) -> bool:

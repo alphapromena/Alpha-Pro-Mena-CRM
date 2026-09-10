@@ -188,15 +188,37 @@ async def test_forgot_password_works_for_all_team_users(
 async def test_forgot_password_resend_cooldown(
     client: AsyncClient, db_session: AsyncSession
 ):
-    """Immediate second forgot-password request triggers a 429 rate limit / cooldown."""
-    await _seed_seven_team_members(db_session, "123456789")
+    """
+    A second forgot-password request inside the cooldown is suppressed silently.
 
-    res1 = await client.post("/api/v1/auth/forgot-password", json={"email": "hassan@alphapromena.com"})
+    It must answer exactly like the first one. Returning 429 here used to confirm
+    that the address was registered, because an unknown address always got 200.
+    The suppression is asserted through the mailbox: no second email is sent.
+    """
+    await _seed_seven_team_members(db_session, "123456789")
+    target = "hassan@alphapromena.com"
+
+    res1 = await client.post("/api/v1/auth/forgot-password", json={"email": target})
     assert res1.status_code == 200
 
-    res2 = await client.post("/api/v1/auth/forgot-password", json={"email": "hassan@alphapromena.com"})
-    assert res2.status_code == 429
-    assert res2.json()["error"]["code"] == "RATE_LIMITED"
+    after_first = await client.get(f"/api/v1/auth/dev-mail?email={target}")
+    sent_after_first = len(after_first.json()["messages"])
+    assert sent_after_first == 1
+
+    res2 = await client.post("/api/v1/auth/forgot-password", json={"email": target})
+    assert res2.status_code == 200
+    assert res2.json()["message"] == res1.json()["message"]
+
+    # The cooldown held: still exactly one email.
+    after_second = await client.get(f"/api/v1/auth/dev-mail?email={target}")
+    assert len(after_second.json()["messages"]) == sent_after_first
+
+    # And an address that does not exist is indistinguishable from the one that does.
+    unknown = await client.post(
+        "/api/v1/auth/forgot-password", json={"email": "nobody@alphapromena.com"}
+    )
+    assert unknown.status_code == res2.status_code
+    assert unknown.json()["message"] == res2.json()["message"]
 
 
 @pytest.mark.asyncio

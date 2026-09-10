@@ -178,13 +178,15 @@ async def test_email_verification_token_flow_and_cooldown(
     )
     assert resend_resp.status_code == 200
 
-    # 3. Immediate second resend triggers cooldown (429)
+    # 3. Immediate second resend is suppressed silently, not answered with 429.
+    #    A distinct status here would confirm the address is registered, since an
+    #    unknown address always receives the same neutral 200.
     cooldown_resp = await client.post(
         "/api/v1/auth/resend-verification",
         json={"email": user.email},
     )
-    assert cooldown_resp.status_code == 429
-    assert cooldown_resp.json()["error"]["code"] == "RATE_LIMITED"
+    assert cooldown_resp.status_code == 200
+    assert cooldown_resp.json()["message"] == resend_resp.json()["message"]
 
     # 4. Valid verification token succeeds (200)
     dev_mail_resp = await client.get(f"/api/v1/auth/dev-mail?email={user.email}")
