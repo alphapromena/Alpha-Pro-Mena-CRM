@@ -284,6 +284,71 @@ class AuthService:
         )
         return raw_token
 
+    async def ensure_verification_email(self, user: User) -> bool:
+        """
+        Send a verification email on login if the account needs one.
+
+        Returns True only when a message was actually handed to the provider, so the
+        response can tell the user to go and look for it.
+
+        Never raises. A login must not fail because the mail provider is down; the
+        caller reports verification_sent=false and the user can retry from the
+        verification page.
+
+        Nothing is sent when the account is already verified, when an unexpired token
+        is still outstanding, or when one was emailed inside the cooldown window.
+        """
+        if getattr(user, "email_verified", False):
+            return False
+
+        now = datetime.now(timezone.utc)
+
+        outstanding_expiry = _as_utc(user.verification_token_expires_at)
+        if user.verification_token_hash and outstanding_expiry and outstanding_expiry > now:
+            logger.info("auth.verification_already_pending", user_id=str(user.id))
+            return False
+
+        sent_at = _as_utc(user.verification_sent_at)
+        if sent_at:
+            seconds_since = (now - sent_at).total_seconds()
+            cooldown = settings.verification_resend_cooldown_seconds
+            if seconds_since < cooldown:
+                logger.info(
+                    "auth.verification_cooldown_on_login",
+                    user_id=str(user.id),
+                    seconds_remaining=max(1, int(cooldown - seconds_since)),
+                )
+                return False
+
+        # Remember the current token state. create_and_send_verification stages a new
+        # token before it sends, and on failure that write must not survive: it would
+        # store a token the user never received and, worse, satisfy the "outstanding
+        # token" check above so no later attempt would ever send one.
+        previous = (
+            user.verification_token_hash,
+            user.verification_token_expires_at,
+            user.verification_sent_at,
+        )
+
+        try:
+            await self.create_and_send_verification(user)
+            return True
+        except Exception as exc:
+            (
+                user.verification_token_hash,
+                user.verification_token_expires_at,
+                user.verification_sent_at,
+            ) = previous
+            self.db.add(user)
+            await self.db.flush()
+            logger.error(
+                "auth.login_verification_send_failed",
+                user_id=str(user.id),
+                error=str(exc),
+                exception_type=type(exc).__name__,
+            )
+            return False
+
     async def verify_email(self, token: str, email: Optional[str] = None) -> User:
         """
         Verify email with one-time token.

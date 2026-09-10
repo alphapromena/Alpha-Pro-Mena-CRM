@@ -163,3 +163,139 @@ async def test_activation_verifies_when_the_caller_proves_an_emailed_token(db_se
 
     assert user.email_verified is True
     assert user.verification_token_hash is None
+
+
+# ─── Login dispatches the code the verify page asks for ───────────────────────
+
+@pytest.mark.asyncio
+async def test_login_sends_exactly_one_verification_email_for_an_unverified_user(
+    client, db_session
+):
+    """
+    The incident: unverified users were bounced to /verify-email with no email ever
+    sent. Login must dispatch it, and say so.
+    """
+    from app.core.email import clear_dev_mailbox, get_dev_mailbox
+
+    clear_dev_mailbox()
+    user = make_user("loginsend", password="CorrectHorse1!", email_verified=False)
+    db_session.add(user)
+    await db_session.flush()
+
+    resp = await client.post(
+        "/api/v1/auth/login", json={"email": user.email, "password": "CorrectHorse1!"}
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["email_verified"] is False
+    assert body["verification_sent"] is True
+
+    sent = [m for m in get_dev_mailbox() if m["to"] == user.email]
+    assert len(sent) == 1, "expected exactly one verification email"
+    assert sent[0]["meta"]["action"] == "verify_email"
+
+    await db_session.refresh(user)
+    assert user.verification_token_hash is not None
+
+
+@pytest.mark.asyncio
+async def test_login_sends_nothing_for_an_already_verified_user(client, db_session):
+    from app.core.email import clear_dev_mailbox, get_dev_mailbox
+
+    clear_dev_mailbox()
+    user = make_user("loginverified", password="CorrectHorse1!", email_verified=True)
+    db_session.add(user)
+    await db_session.flush()
+
+    resp = await client.post(
+        "/api/v1/auth/login", json={"email": user.email, "password": "CorrectHorse1!"}
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["email_verified"] is True
+    assert body["verification_sent"] is False
+    assert [m for m in get_dev_mailbox() if m["to"] == user.email] == []
+
+
+@pytest.mark.asyncio
+async def test_a_second_login_inside_the_cooldown_does_not_send_again(client, db_session):
+    """One email per cooldown window, however many times the user retries login."""
+    from app.core.email import clear_dev_mailbox, get_dev_mailbox
+
+    clear_dev_mailbox()
+    user = make_user("logincooldown", password="CorrectHorse1!", email_verified=False)
+    db_session.add(user)
+    await db_session.flush()
+
+    first = await client.post(
+        "/api/v1/auth/login", json={"email": user.email, "password": "CorrectHorse1!"}
+    )
+    assert first.json()["verification_sent"] is True
+
+    second = await client.post(
+        "/api/v1/auth/login", json={"email": user.email, "password": "CorrectHorse1!"}
+    )
+    assert second.status_code == 200, "the login itself must still succeed"
+    assert second.json()["verification_sent"] is False
+
+    assert len([m for m in get_dev_mailbox() if m["to"] == user.email]) == 1
+
+
+@pytest.mark.asyncio
+async def test_login_does_not_resend_while_a_token_is_still_outstanding(client, db_session):
+    """An unexpired token the user already has is not replaced on every login."""
+    from app.core.email import clear_dev_mailbox, get_dev_mailbox
+
+    clear_dev_mailbox()
+    existing = hash_token(generate_secure_token())
+    user = make_user(
+        "loginpending",
+        password="CorrectHorse1!",
+        email_verified=False,
+        verification_token_hash=existing,
+        verification_token_expires_at=datetime.now(timezone.utc) + timedelta(hours=12),
+    )
+    db_session.add(user)
+    await db_session.flush()
+
+    resp = await client.post(
+        "/api/v1/auth/login", json={"email": user.email, "password": "CorrectHorse1!"}
+    )
+    assert resp.status_code == 200
+    assert resp.json()["verification_sent"] is False
+    assert [m for m in get_dev_mailbox() if m["to"] == user.email] == []
+
+    await db_session.refresh(user)
+    assert user.verification_token_hash == existing, "the outstanding token was replaced"
+
+
+@pytest.mark.asyncio
+async def test_login_still_succeeds_when_the_verification_email_fails(
+    client, db_session, monkeypatch
+):
+    """
+    A dead mail provider must not lock people out of the product. The login returns
+    200 with verification_sent false, and no undelivered token is left behind.
+    """
+    from app.auth import service as service_module
+
+    async def exploding_send(*args, **kwargs):
+        raise RuntimeError("provider unavailable")
+
+    monkeypatch.setattr(service_module, "send_verification_email", exploding_send)
+
+    user = make_user("loginfail", password="CorrectHorse1!", email_verified=False)
+    db_session.add(user)
+    await db_session.flush()
+
+    resp = await client.post(
+        "/api/v1/auth/login", json={"email": user.email, "password": "CorrectHorse1!"}
+    )
+    assert resp.status_code == 200, "login must not fail because email failed"
+    assert resp.json()["verification_sent"] is False
+
+    await db_session.refresh(user)
+    # A token staged for an email that never went out would both be unusable and
+    # suppress every later attempt via the outstanding-token check.
+    assert user.verification_token_hash is None
+    assert user.verification_sent_at is None
