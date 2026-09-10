@@ -106,8 +106,21 @@ async def run_migrations_now(session: AsyncSession) -> Dict[str, Any]:
 
 
 async def _run_migrations(session: AsyncSession) -> Dict[str, Any]:
-    """Core migration logic. Returns a result dict with success/error info."""
+    """
+    Apply the schema, then seed the team accounts, in two separate transactions.
+
+    These used to share one transaction and one commit at the end, so any failure in
+    the bootstrap step rolled the schema changes back with it. That is what turned a
+    missing BOOTSTRAP_PASSWORD into a schema outage. The two concerns are now
+    independent: the schema commits on its own and stays committed regardless of what
+    the bootstrap does afterwards.
+
+    A bootstrap failure is reported so the caller retries on a later invocation, but
+    it can no longer destroy work that already succeeded.
+    """
     steps: List[str] = []
+
+    # ── Phase 1: schema. Commits on its own. ─────────────────────────────────
     try:
         # Detect dialect from URL — session.bind is always None in SQLAlchemy 2.x async
         db_url = str(settings.database_url)
@@ -122,26 +135,65 @@ async def _run_migrations(session: AsyncSession) -> Dict[str, Any]:
             await _migrate_sqlite(session)
             steps.append("sqlite_ddl_ok")
 
-        await _bootstrap_team_users(session)
-        steps.append("bootstrap_ok")
-
         await session.commit()
-        steps.append("committed")
-        return {"success": True, "steps": steps}
-
+        steps.append("schema_committed")
     except Exception as exc:
         tb = traceback.format_exc()
         try:
             await session.rollback()
         except Exception:
             pass
+        logger.error(
+            "auto_migrate.schema_failed",
+            error=str(exc),
+            exception_type=type(exc).__name__,
+        )
         return {
             "success": False,
+            "phase": "schema",
+            "schema_ok": False,
+            "bootstrap_ok": False,
             "steps": steps,
             "error": str(exc),
             "exception_type": type(exc).__name__,
             "traceback": tb,
         }
+
+    # ── Phase 2: bootstrap. Isolated, so a failure here keeps the schema. ────
+    try:
+        await _bootstrap_team_users(session)
+        await session.commit()
+        steps.append("bootstrap_committed")
+    except Exception as exc:
+        tb = traceback.format_exc()
+        try:
+            await session.rollback()
+        except Exception:
+            pass
+        logger.error(
+            "auto_migrate.bootstrap_failed",
+            error=str(exc),
+            exception_type=type(exc).__name__,
+            note="Schema changes from phase 1 remain committed.",
+        )
+        return {
+            "success": False,
+            "phase": "bootstrap",
+            "schema_ok": True,
+            "bootstrap_ok": False,
+            "steps": steps,
+            "error": str(exc),
+            "exception_type": type(exc).__name__,
+            "traceback": tb,
+        }
+
+    return {
+        "success": True,
+        "phase": "complete",
+        "schema_ok": True,
+        "bootstrap_ok": True,
+        "steps": steps,
+    }
 
 
 # ─── PostgreSQL DDL ────────────────────────────────────────────────────────────
