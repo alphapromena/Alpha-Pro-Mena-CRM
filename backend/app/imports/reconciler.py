@@ -112,7 +112,7 @@ class ImportReport:
         }
 
 
-# ── Merge scoring ─────────────────────────────────────────────────────────────
+# ── Merge scoring & conflict resolution ───────────────────────────────────────
 
 def _completeness_score(lr: LeadRow) -> int:
     s = 0
@@ -127,7 +127,106 @@ def _completeness_score(lr: LeadRow) -> int:
     return s
 
 
-def _merge_rows(existing: LeadRow, incoming: LeadRow) -> LeadRow:
+def _qualification_weight(row: LeadRow) -> int:
+    """Score the engagement / qualification progress of call attempt outcomes."""
+    high_engagement = {
+        "demo", "interested", "asked for email", "asked for whatapp",
+        "asked for whatsapp", "re call", "recall",
+    }
+    score = 0
+    for att in (row.attempt_1_text, row.attempt_2_text, row.attempt_3_text):
+        if not att:
+            continue
+        low = att.strip().lower()
+        if any(term in low for term in high_engagement):
+            score += 5
+        elif any(term in low for term in ("no answer", "wrong number", "not interested", "voice male", "voice mail")):
+            score += 1
+        else:
+            score += 2
+    return score
+
+
+def _resolve_salesperson_conflict(
+    row_a: LeadRow, row_b: LeadRow
+) -> Tuple[str, str, str]:
+    """Resolve ownership conflict between two rows with different salespeople.
+
+    Returns (winner_salesperson, loser_salesperson, reason).
+
+    Business rules:
+    1. Empty vs non-empty: non-empty always wins.
+    2. Operational / legacy exclusion: Aseel (DATA_OPS) and legacy employees
+       (Maria, Raneem) are never preferred over active sales reps.
+    3. Explicit Notes attribution: If one row's notes explicitly name the other
+       salesperson (e.g. Amin's rows for QatarEnergy note 'Saleh'), that rep wins.
+    4. Sales qualification progress: Rep with higher-engagement outcomes (Demo, Interested,
+       Asked for email/whatsapp, Re Call) wins over passive No Answer.
+    5. Attempt count: Rep with more recorded attempts wins.
+    6. Canonical sheet priority: 'Leads' worksheet takes priority over sub-sheets.
+    7. Deterministic tie-breaker: Alphabetical on normalized name (NEVER random row order).
+    """
+    sp_a = (row_a.salesperson or "").strip()
+    sp_b = (row_b.salesperson or "").strip()
+
+    if sp_a and not sp_b:
+        return sp_a, sp_b, "Only one record has an assigned salesperson"
+    if sp_b and not sp_a:
+        return sp_b, sp_a, "Only one record has an assigned salesperson"
+
+    sp_a_low = sp_a.lower()
+    sp_b_low = sp_b.lower()
+
+    if sp_a_low == sp_b_low:
+        return sp_a, sp_b, "Identical salesperson"
+
+    # Exclude operational/legacy
+    excluded = {"aseel", "maria", "raneem"}
+    if sp_a_low in excluded and sp_b_low not in excluded:
+        return sp_b, sp_a, f"Sales rep '{sp_b}' preferred over operational/legacy '{sp_a}'"
+    if sp_b_low in excluded and sp_a_low not in excluded:
+        return sp_a, sp_b, f"Sales rep '{sp_a}' preferred over operational/legacy '{sp_b}'"
+
+    # Explicit notes attribution / handoff
+    notes_a = (row_a.notes or "").lower()
+    notes_b = (row_b.notes or "").lower()
+    if sp_b_low in notes_a and sp_a_low not in notes_b:
+        return sp_b, sp_a, f"Explicit handoff to '{sp_b}' documented in row notes"
+    if sp_a_low in notes_b and sp_b_low not in notes_a:
+        return sp_a, sp_b, f"Explicit handoff to '{sp_a}' documented in row notes"
+
+    # Qualification progress
+    q_a = _qualification_weight(row_a)
+    q_b = _qualification_weight(row_b)
+    if q_a > q_b:
+        return sp_a, sp_b, f"Salesperson '{sp_a}' has higher qualification progress ({q_a} vs {q_b})"
+    if q_b > q_a:
+        return sp_b, sp_a, f"Salesperson '{sp_b}' has higher qualification progress ({q_b} vs {q_a})"
+
+    # Attempt count
+    if row_a.attempt_count > row_b.attempt_count:
+        return sp_a, sp_b, f"Salesperson '{sp_a}' has more call attempts ({row_a.attempt_count} vs {row_b.attempt_count})"
+    if row_b.attempt_count > row_a.attempt_count:
+        return sp_b, sp_a, f"Salesperson '{sp_b}' has more call attempts ({row_b.attempt_count} vs {row_a.attempt_count})"
+
+    # Canonical sheet priority
+    if row_a.source_sheet == "Leads" and row_b.source_sheet != "Leads":
+        return sp_a, sp_b, "Canonical assignment from 'Leads' worksheet"
+    if row_b.source_sheet == "Leads" and row_a.source_sheet != "Leads":
+        return sp_b, sp_a, "Canonical assignment from 'Leads' worksheet"
+
+    # Deterministic tie-breaker (alphabetical by name, NEVER random row order)
+    if sp_a_low < sp_b_low:
+        return sp_a, sp_b, f"Deterministic canonical selection ({sp_a} over {sp_b})"
+    else:
+        return sp_b, sp_a, f"Deterministic canonical selection ({sp_b} over {sp_a})"
+
+
+def _merge_rows(
+    existing: LeadRow,
+    incoming: LeadRow,
+    report: Optional[ImportReport] = None,
+) -> LeadRow:
     """Merge two rows for the same identity, keeping the richest data.
 
     Rules:
@@ -135,7 +234,8 @@ def _merge_rows(existing: LeadRow, incoming: LeadRow) -> LeadRow:
     - Gaps filled from loser (never overwrite non-blank winner fields).
     - Attempt count takes the maximum.
     - DEMO_SCHEDULED status propagates from either row.
-    - Salesperson conflict: keep the winner's; flag if both non-empty + different.
+    - Salesperson conflict: resolved deterministically via _resolve_salesperson_conflict,
+      never by file row order or uploading user.
     """
     if _completeness_score(existing) >= _completeness_score(incoming):
         winner, loser = existing, incoming
@@ -156,12 +256,38 @@ def _merge_rows(existing: LeadRow, incoming: LeadRow) -> LeadRow:
             incoming.status_hint == "DEMO_SCHEDULED"):
         winner.status_hint = "DEMO_SCHEDULED"
 
+    # Deterministic salesperson conflict resolution
+    sp_exist = (existing.salesperson or "").strip()
+    sp_incom = (incoming.salesperson or "").strip()
+    if sp_exist and sp_incom and sp_exist.lower() != sp_incom.lower():
+        resolved_sp, loser_sp, reason = _resolve_salesperson_conflict(existing, incoming)
+        winner.salesperson = resolved_sp
+        if report is not None:
+            report.total_conflicts += 1
+            sheet = winner.source_sheet or incoming.source_sheet or "_batch_"
+            if sheet in report.per_sheet:
+                report.per_sheet[sheet].rows_conflicts += 1
+            report.conflict_rows.append({
+                "sheet": sheet,
+                "row": winner.source_row,
+                "name": f"{winner.first_name} {winner.last_name}".strip(),
+                "phone": winner.phone,
+                "chosen_salesperson": resolved_sp,
+                "other_salesperson": loser_sp,
+                "reason": reason,
+            })
+    elif not winner.salesperson and loser.salesperson:
+        winner.salesperson = loser.salesperson
+
     return winner
 
 
 # ── Deduplication within a batch ──────────────────────────────────────────────
 
-def deduplicate(all_rows: List[LeadRow]) -> Tuple[List[LeadRow], int]:
+def deduplicate(
+    all_rows: List[LeadRow],
+    report: Optional[ImportReport] = None,
+) -> Tuple[List[LeadRow], int]:
     """Deduplicate rows by import_key within the batch.
 
     Returns (unique_rows, intra_duplicate_count).
@@ -176,7 +302,7 @@ def deduplicate(all_rows: List[LeadRow]) -> Tuple[List[LeadRow], int]:
             invalid_passthrough.append(row)
             continue
         if row.import_key in seen:
-            seen[row.import_key] = _merge_rows(seen[row.import_key], row)
+            seen[row.import_key] = _merge_rows(seen[row.import_key], row, report=report)
             merged_count += 1
         else:
             seen[row.import_key] = row

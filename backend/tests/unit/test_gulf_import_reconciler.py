@@ -16,6 +16,7 @@ from app.imports.reconciler import (
     ImportReport,
     _completeness_score,
     _merge_rows,
+    _resolve_salesperson_conflict,
     _names_overlap,
     deduplicate,
     match_to_db,
@@ -242,3 +243,52 @@ class TestClassifyRows:
         assert report.total_conflicts == 1
         assert len(report.conflict_rows) == 1
         assert report.conflict_rows[0]["name"] == "Omar Al-Ghamdi"
+
+
+# ── _resolve_salesperson_conflict ─────────────────────────────────────────────
+
+class TestSalespersonConflictResolution:
+    def test_explicit_notes_attribution_wins(self):
+        # Amin's row for QatarEnergy notes 'Saleh'
+        row_amin = _make_row(salesperson="Amin", notes="Saleh", import_key="key1")
+        row_saleh = _make_row(salesperson="Saleh", notes="", import_key="key1")
+        winner, loser, reason = _resolve_salesperson_conflict(row_amin, row_saleh)
+        assert winner == "Saleh"
+        assert loser == "Amin"
+        assert "notes" in reason.lower()
+
+    def test_higher_qualification_wins_over_no_answer(self):
+        # Saleh asked for email vs Amin no answer
+        row_saleh = _make_row(salesperson="Saleh", attempt_1_text="Asked for email", attempt_count=1)
+        row_amin = _make_row(salesperson="Amin", attempt_1_text="No Answer", attempt_count=1)
+        winner, loser, reason = _resolve_salesperson_conflict(row_saleh, row_amin)
+        assert winner == "Saleh"
+        assert "higher qualification" in reason.lower()
+
+    def test_active_rep_preferred_over_aseel(self):
+        row_aseel = _make_row(salesperson="Aseel", attempt_count=2)
+        row_ghaida = _make_row(salesperson="Ghaida", attempt_count=1)
+        winner, loser, reason = _resolve_salesperson_conflict(row_aseel, row_ghaida)
+        assert winner == "Ghaida"
+        assert loser == "Aseel"
+
+    def test_deterministic_tie_breaker_independent_of_order(self):
+        row1 = _make_row(salesperson="Hassan", attempt_count=1, attempt_1_text="No Answer")
+        row2 = _make_row(salesperson="Amin", attempt_count=1, attempt_1_text="No Answer")
+        winner1, _, _ = _resolve_salesperson_conflict(row1, row2)
+        winner2, _, _ = _resolve_salesperson_conflict(row2, row1)
+        assert winner1 == winner2 == "Amin"
+
+    def test_deduplicate_records_conflict_in_report(self):
+        report = ImportReport()
+        row1 = _make_row(salesperson="Hassan", import_key="dup_key", attempt_1_text="Asked for email")
+        row2 = _make_row(salesperson="Ghaida", import_key="dup_key", attempt_1_text="No Answer")
+        unique, merged = deduplicate([row1, row2], report=report)
+        assert len(unique) == 1
+        assert merged == 1
+        assert unique[0].salesperson == "Hassan"
+        assert report.total_conflicts == 1
+        assert len(report.conflict_rows) == 1
+        assert report.conflict_rows[0]["chosen_salesperson"] == "Hassan"
+        assert report.conflict_rows[0]["other_salesperson"] == "Ghaida"
+
