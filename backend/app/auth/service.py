@@ -2,6 +2,7 @@
 Authentication service — login, logout, token refresh, account lockout,
 email verification, forced password activation, and password reset.
 """
+import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -11,7 +12,14 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import AccountLockedError, UnauthorizedError, ValidationError, NotFoundError, RateLimitError
+from app.core.exceptions import (
+    AccountLockedError,
+    EmailDeliveryError,
+    NotFoundError,
+    RateLimitError,
+    UnauthorizedError,
+    ValidationError,
+)
 from app.core.security import (
     create_access_token,
     create_refresh_token,
@@ -34,6 +42,21 @@ from app.config import get_settings
 
 settings = get_settings()
 logger = structlog.get_logger(__name__)
+
+def _as_utc(value: Optional[datetime]) -> Optional[datetime]:
+    """
+    Coerce a stored timestamp to an aware UTC datetime.
+
+    Some backends hand back naive datetimes, and comparing one to an aware "now"
+    raises TypeError. The token paths already did this inline; the lockout path did
+    not, which only stayed hidden because lockout never engaged.
+    """
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
+
 
 MAX_LOGIN_ATTEMPTS = 5
 LOCKOUT_DURATION_MINUTES = 15
@@ -66,31 +89,40 @@ class AuthService:
         candidate_hash = user.password_hash if user else dummy_password_hash()
         password_ok = verify_password(password, candidate_hash)
 
+        # Lockout is resolved before the credential result is acted on. Checking it
+        # afterwards turned the response into a password oracle: a locked account
+        # answered 401 for a wrong password but 423 for the right one, so an attacker
+        # who had already tripped the lockout could still confirm a correct guess.
+        if user and user.is_locked:
+            locked_until = _as_utc(user.locked_until)
+            if locked_until and datetime.now(timezone.utc) < locked_until:
+                raise AccountLockedError(
+                    f"Account locked until {locked_until.strftime('%H:%M UTC')}."
+                )
+            # Lockout window has passed — clear it and continue with this attempt.
+            await self._reset_login_attempts(user)
+
         if not user or not password_ok:
             if user:
                 await self._record_failed_attempt(user)
             await self.audit.log(
                 action="user.login_failed",
                 entity_type="user",
+                entity_id=user.id if user else None,
                 actor_id=user.id if user else None,
                 ip_address=ip_address,
                 notes=f"Failed login attempt for {normalized}",
             )
             logger.warning("auth.login_failed", email=email, ip=ip_address)
+            # Commit before raising. The rejection below propagates into get_db, whose
+            # `except Exception: rollback()` would otherwise discard the attempt counter
+            # and the audit entry, leaving the lockout threshold permanently unreachable.
+            await self.db.commit()
             raise UnauthorizedError("Invalid email or password.")
 
         if not user.is_active:
             logger.warning("auth.inactive_user", user_id=str(user.id))
             raise UnauthorizedError("Account is inactive. Please contact your administrator.")
-
-        if user.is_locked:
-            if user.locked_until and datetime.now(timezone.utc) < user.locked_until:
-                raise AccountLockedError(
-                    f"Account locked until {user.locked_until.strftime('%H:%M UTC')}."
-                )
-            else:
-                # Lockout expired — reset
-                await self._reset_login_attempts(user)
 
         # Successful login
         await self._on_successful_login(user, ip_address)
@@ -166,7 +198,7 @@ class AuthService:
         if current_password and not verify_password(current_password, user.password_hash):
             raise UnauthorizedError("Current password is incorrect.")
 
-        if new_password.strip() == "123456789":
+        if self._is_bootstrap_password(new_password):
             raise ValidationError("New password cannot be the temporary bootstrap password.")
 
         if verify_password(new_password, user.password_hash):
@@ -207,12 +239,32 @@ class AuthService:
         self.db.add(user)
         await self.db.flush()
 
-        await send_verification_email(
+        result = await send_verification_email(
             to_email=user.email,
             recipient_name=user.first_name,
             token=raw_token,
         )
-        logger.info("auth.verification_sent", user_id=str(user.id), email=user.email)
+        if not result.ok:
+            # Surfaced to the caller as a 503. The surrounding transaction is rolled
+            # back, so the undelivered token is not left on the account and the resend
+            # cooldown is not started by a send that never happened.
+            logger.error(
+                "auth.verification_send_failed",
+                user_id=str(user.id),
+                provider=result.provider,
+                error=result.error,
+            )
+            raise EmailDeliveryError(
+                "We could not send the verification email. Please try again shortly."
+            )
+
+        logger.info(
+            "auth.verification_sent",
+            user_id=str(user.id),
+            email=user.email,
+            provider=result.provider,
+            message_id=result.message_id,
+        )
         return raw_token
 
     async def verify_email(self, token: str, email: Optional[str] = None) -> User:
@@ -277,6 +329,7 @@ class AuthService:
         if not user or user.email_verified:
             # Dummy timing balance
             dummy_password_hash()
+            self._assert_email_delivery_possible()
             logger.info("auth.resend_verification_noop", email=normalized)
             return
 
@@ -288,10 +341,15 @@ class AuthService:
             seconds_since = (now - v_sent).total_seconds()
             cooldown = settings.verification_resend_cooldown_seconds
             if seconds_since < cooldown:
-                remaining = max(1, int(cooldown - seconds_since))
-                raise RateLimitError(
-                    f"Please wait {remaining} seconds before requesting another verification email."
+                # Return the same neutral response an unknown address gets. Raising a
+                # 429 here answered only for addresses that exist and are unverified,
+                # which turned the cooldown into an account-existence oracle.
+                logger.info(
+                    "auth.resend_verification_cooldown",
+                    user_id=str(user.id),
+                    seconds_remaining=max(1, int(cooldown - seconds_since)),
                 )
+                return
 
         await self.create_and_send_verification(user)
         await self.audit.log(
@@ -315,6 +373,7 @@ class AuthService:
 
         if not user or not user.is_active:
             dummy_password_hash()
+            self._assert_email_delivery_possible()
             logger.info("auth.password_reset_noop", email=normalized)
             return
 
@@ -324,12 +383,16 @@ class AuthService:
             if r_sent.tzinfo is None:
                 r_sent = r_sent.replace(tzinfo=timezone.utc)
             seconds_since = (now - r_sent).total_seconds()
-            cooldown = 60
+            cooldown = settings.verification_resend_cooldown_seconds
             if seconds_since < cooldown:
-                remaining = max(1, int(cooldown - seconds_since))
-                raise RateLimitError(
-                    f"Please wait {remaining} seconds before requesting another reset email."
+                # Same reasoning as resend_verification: answering differently inside
+                # the cooldown window would confirm that the address is registered.
+                logger.info(
+                    "auth.password_reset_cooldown",
+                    user_id=str(user.id),
+                    seconds_remaining=max(1, int(cooldown - seconds_since)),
                 )
+                return
 
         raw_token = generate_secure_token()
         user.password_reset_token_hash = hash_token(raw_token)
@@ -338,11 +401,21 @@ class AuthService:
         self.db.add(user)
         await self.db.flush()
 
-        await send_password_reset_email(
+        result = await send_password_reset_email(
             to_email=user.email,
             recipient_name=user.first_name,
             token=raw_token,
         )
+        if not result.ok:
+            logger.error(
+                "auth.password_reset_send_failed",
+                user_id=str(user.id),
+                provider=result.provider,
+                error=result.error,
+            )
+            raise EmailDeliveryError(
+                "We could not send the password reset email. Please try again shortly."
+            )
 
         await self.audit.log(
             action="user.password_reset_requested",
@@ -350,14 +423,19 @@ class AuthService:
             actor_id=user.id,
             entity_id=user.id,
         )
-        logger.info("auth.password_reset_requested", user_id=str(user.id))
+        logger.info(
+            "auth.password_reset_requested",
+            user_id=str(user.id),
+            provider=result.provider,
+            message_id=result.message_id,
+        )
 
     async def reset_password_with_token(self, token: str, new_password: str) -> User:
         """Reset password using one-time token."""
         if not token or not token.strip():
             raise ValidationError("Reset token is required.")
 
-        if new_password.strip() == "123456789":
+        if self._is_bootstrap_password(new_password):
             raise ValidationError("New password cannot be the temporary bootstrap password.")
 
         is_strong, err_msg = validate_password_strength(new_password)
@@ -408,6 +486,38 @@ class AuthService:
         )
         logger.info("auth.password_reset_completed", user_id=str(user.id))
         return user
+
+    @staticmethod
+    def _assert_email_delivery_possible() -> None:
+        """
+        Fail the same way for an unknown address as for a real one.
+
+        The endpoints that send mail answer with a neutral message so they do not
+        confirm which addresses exist. That guarantee only holds if a broken mail
+        configuration also fails identically on both paths, otherwise a 503 for real
+        accounts and a 200 for unknown ones becomes the oracle the neutral message
+        was meant to prevent.
+        """
+        if settings.app_env == "production" and not settings.email_delivery_available:
+            raise EmailDeliveryError(
+                "Email delivery is not configured on this deployment. "
+                "Set EMAIL_PROVIDER together with the matching credentials."
+            )
+
+    @staticmethod
+    def _is_bootstrap_password(candidate: str) -> bool:
+        """
+        True when the candidate equals the configured bootstrap password.
+
+        This used to compare against a hardcoded literal, which stopped matching
+        anything once the bootstrap password moved to the BOOTSTRAP_PASSWORD
+        environment variable, so the guard silently protected nothing.
+        """
+        configured = (getattr(settings, "bootstrap_password", "") or "").strip()
+        if not configured:
+            return False
+        return secrets.compare_digest(candidate.strip(), configured)
+
 
     # ── Internal lockout helpers ──────────────────────────────────────────────
 

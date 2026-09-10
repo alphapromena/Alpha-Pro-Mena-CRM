@@ -66,6 +66,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       theme: newTheme,
       user: state.user ? { ...state.user, theme_preference: newTheme } : null,
     }));
+    // Anonymous visitors can still switch theme; it just stays local. Calling the
+    // authenticated endpoint here was one of the 401 sources on the login page.
+    if (!get().isAuthenticated) return;
     try {
       await api.patch('/auth/theme', { theme_preference: newTheme });
     } catch (err) {
@@ -81,6 +84,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       language: newLang,
       user: state.user ? ({ ...state.user, preferred_language: newLang } as any) : null,
     }));
+    if (!get().isAuthenticated) return;
     try {
       await api.patch('/auth/language', { preferred_language: newLang });
     } catch (err) {
@@ -115,6 +119,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       theme: user?.theme_preference || get().theme || 'black_beige',
       language: ((user as any)?.preferred_language as 'en' | 'ar') || get().language || 'en',
       isAuthenticated: !!user,
+      // A definitive answer about the session, so bootstrapping is over. Without
+      // this, an anonymous start that calls setUser(null) instead of fetchMe would
+      // leave isLoading true and the app stuck on the loading screen.
+      isLoading: false,
     });
   },
 }));

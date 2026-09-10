@@ -123,12 +123,11 @@ export const DragDropDataImport: React.FC<DragDropDataImportProps> = ({
       const formData = new FormData();
       formData.append('file', file);
 
-      const token = localStorage.getItem('token');
+      // Cookie auth: localStorage['token'] is never written anywhere in this app,
+      // so this used to send `Bearer null` and omit credentials.
       const response = await fetch('/api/v1/admin/import/preview', {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+        credentials: 'include',
         body: formData,
       });
 
@@ -163,12 +162,9 @@ export const DragDropDataImport: React.FC<DragDropDataImportProps> = ({
       formData.append('file', selectedFile);
       formData.append('mapping', JSON.stringify(columnMapping));
 
-      const token = localStorage.getItem('token');
       const response = await fetch('/api/v1/admin/import/commit', {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+        credentials: 'include',
         body: formData,
       });
 

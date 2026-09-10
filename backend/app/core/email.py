@@ -1,29 +1,56 @@
-﻿"""
-Email delivery service.
-Handles verification emails and password reset emails.
-
-Priority:
-  1. Resend API  (RESEND_API_KEY is set)  — preferred, reliable transactional delivery
-  2. SMTP        (SMTP_HOST is set)       — legacy fallback
-  3. Dev mailbox (nothing configured)    — local dev / test, no real email sent
-
-In development or test mode the dev mailbox is always used regardless of
-which backend is configured, so real emails are never sent during CI.
 """
+Email delivery.
+
+Transport is chosen by EMAIL_PROVIDER: "resend", "smtp" or "mock". Left unset, the
+first provider with credentials wins and "mock" is the last resort.
+
+The mock transport records messages in memory for local development and tests. It can
+never run in production: an explicit EMAIL_PROVIDER=mock is rejected at settings load
+time, and an implicit fall-through to mock raises EmailDeliveryError at send time. That
+replaces the previous behaviour, where an unconfigured production environment silently
+discarded every message and reported success to the user.
+
+send_email returns an EmailResult rather than a bare bool so callers can log which
+provider handled the message, record the provider's message id, and surface a real
+error.
+"""
+import asyncio
 import smtplib
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from datetime import datetime, timezone
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional
+from urllib.parse import quote
 
+import httpx
 import structlog
+
 from app.config import get_settings
+from app.core.exceptions import EmailDeliveryError
 
 settings = get_settings()
 logger = structlog.get_logger(__name__)
 
+RESEND_ENDPOINT = "https://api.resend.com/emails"
+SEND_TIMEOUT_SECONDS = 10.0
+
 # Local in-memory store for development / test inspection
 _DEV_MAILBOX: List[Dict[str, Any]] = []
+
+
+@dataclass(frozen=True)
+class EmailResult:
+    """Outcome of a single send attempt."""
+    ok: bool
+    provider: str
+    message_id: Optional[str] = None
+    error: Optional[str] = None
+    meta: Dict[str, Any] = field(default_factory=dict)
+
+    def __bool__(self) -> bool:
+        # Keeps `if await send_email(...)` working for any caller that still expects a bool.
+        return self.ok
 
 
 def get_dev_mailbox() -> List[Dict[str, Any]]:
@@ -36,83 +63,86 @@ def clear_dev_mailbox() -> None:
     _DEV_MAILBOX.clear()
 
 
-async def send_email(
-    to_email: str,
-    subject: str,
-    text_content: str,
-    html_content: Optional[str] = None,
-    meta: Optional[Dict[str, Any]] = None,
-) -> bool:
-    """
-    Send an email.
-    Routes to Resend → SMTP → dev mailbox in priority order.
-    Dev/test environments always use the dev mailbox.
-    """
-    msg_record = {
-        "to": to_email,
-        "email": to_email,
-        "subject": subject,
-        "text": text_content,
-        "html": html_content,
-        "sent_at": datetime.now(timezone.utc).isoformat(),
-        "token": meta.get("token") if meta else None,
-        "meta": meta or {},
-    }
-
-    # Always use dev mailbox in dev/test — never send real emails during CI
-    if not settings.email_configured or settings.app_env in ("development", "test"):
-        _DEV_MAILBOX.append(msg_record)
-        if len(_DEV_MAILBOX) > 100:
-            _DEV_MAILBOX.pop(0)
-        logger.info(
-            "email.mock_delivered",
-            to=to_email,
-            subject=subject,
-            action=meta.get("action") if meta else None,
-        )
-        return True
-
-    # ── Resend (preferred) ───────────────────────────────────────────────────
-    if settings.resend_configured:
-        return await _send_via_resend(to_email, subject, text_content, html_content, meta)
-
-    # ── SMTP (legacy fallback) ───────────────────────────────────────────────
-    return await _send_via_smtp(to_email, subject, text_content, html_content, meta)
-
+# ─── Providers ────────────────────────────────────────────────────────────────
 
 async def _send_via_resend(
     to_email: str,
     subject: str,
     text_content: str,
     html_content: Optional[str],
-    meta: Optional[Dict[str, Any]],
-) -> bool:
-    """Send via Resend API."""
+) -> EmailResult:
+    """Deliver through the Resend HTTP API."""
+    payload: Dict[str, Any] = {
+        "from": settings.sender_address,
+        "to": [to_email],
+        "subject": subject,
+        "text": text_content,
+    }
+    if html_content:
+        payload["html"] = html_content
+
     try:
-        import resend  # lazy import — only needed when Resend is configured
+        async with httpx.AsyncClient(timeout=SEND_TIMEOUT_SECONDS) as http:
+            response = await http.post(
+                RESEND_ENDPOINT,
+                json=payload,
+                headers={
+                    "Authorization": f"Bearer {settings.resend_api_key}",
+                    "Content-Type": "application/json",
+                },
+            )
+    except httpx.HTTPError as exc:
+        return EmailResult(ok=False, provider="resend", error=f"transport error: {exc}")
 
-        resend.api_key = settings.resend_api_key
-
-        params: Dict[str, Any] = {
-            "from": settings.resend_from_email,
-            "to": [to_email],
-            "subject": subject,
-            "text": text_content,
-        }
-        if html_content:
-            params["html"] = html_content
-
-        resend.Emails.send(params)
-        logger.info(
-            "email.resend_sent",
-            to=to_email,
-            subject=subject,
-            action=meta.get("action") if meta else None,
+    if response.status_code >= 400:
+        # Resend returns a JSON body with a message; fall back to the raw text.
+        detail: str
+        try:
+            body = response.json()
+            detail = body.get("message") or body.get("error") or str(body)
+        except Exception:
+            detail = response.text[:300]
+        return EmailResult(
+            ok=False,
+            provider="resend",
+            error=f"HTTP {response.status_code}: {detail}",
         )
-        return True
-    except Exception as exc:
-        logger.error("email.resend_failed", to=to_email, error=str(exc))
-        return False
+
+    message_id: Optional[str] = None
+    try:
+        message_id = response.json().get("id")
+    except Exception:
+        pass
+    return EmailResult(ok=True, provider="resend", message_id=message_id)
+
+
+def _smtp_send_blocking(
+    to_email: str,
+    subject: str,
+    text_content: str,
+    html_content: Optional[str],
+) -> None:
+    """The blocking part of an SMTP send. Runs in a worker thread."""
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = settings.sender_address
+    msg["To"] = to_email
+    msg.attach(MIMEText(text_content, "plain", "utf-8"))
+    if html_content:
+        msg.attach(MIMEText(html_content, "html", "utf-8"))
+
+    server = smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=SEND_TIMEOUT_SECONDS)
+    try:
+        if settings.smtp_use_tls:
+            server.starttls()
+        if settings.smtp_user and settings.smtp_password:
+            server.login(settings.smtp_user, settings.smtp_password)
+        server.sendmail(settings.sender_address, [to_email], msg.as_string())
+    finally:
+        try:
+            server.quit()
+        except Exception:
+            pass
 
 
 async def _send_via_smtp(
@@ -120,36 +150,131 @@ async def _send_via_smtp(
     subject: str,
     text_content: str,
     html_content: Optional[str],
-    meta: Optional[Dict[str, Any]],
-) -> bool:
-    """Send via raw SMTP (legacy fallback)."""
+) -> EmailResult:
+    """
+    Deliver through SMTP.
+
+    smtplib is synchronous, so it is pushed to a worker thread rather than blocking
+    the event loop for the duration of the connection.
+    """
     try:
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = subject
-        msg["From"] = settings.smtp_from_email
-        msg["To"] = to_email
-
-        msg.attach(MIMEText(text_content, "plain", "utf-8"))
-        if html_content:
-            msg.attach(MIMEText(html_content, "html", "utf-8"))
-
-        server = smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=10)
-        if settings.smtp_use_tls:
-            server.starttls()
-        if settings.smtp_user and settings.smtp_password:
-            server.login(settings.smtp_user, settings.smtp_password)
-        server.sendmail(settings.smtp_from_email, [to_email], msg.as_string())
-        server.quit()
-        logger.info("email.smtp_sent", to=to_email, subject=subject)
-        return True
+        await asyncio.to_thread(
+            _smtp_send_blocking, to_email, subject, text_content, html_content
+        )
     except Exception as exc:
-        logger.error("email.smtp_failed", to=to_email, error=str(exc))
-        return False
+        return EmailResult(ok=False, provider="smtp", error=str(exc))
+    return EmailResult(ok=True, provider="smtp")
 
 
-async def send_verification_email(to_email: str, recipient_name: str, token: str) -> bool:
+def _send_via_mock(record: Dict[str, Any]) -> EmailResult:
+    """Record the message in memory. Development and test only."""
+    _DEV_MAILBOX.append(record)
+    if len(_DEV_MAILBOX) > 100:
+        _DEV_MAILBOX.pop(0)
+    return EmailResult(ok=True, provider="mock")
+
+
+# ─── Entry point ──────────────────────────────────────────────────────────────
+
+async def send_email(
+    to_email: str,
+    subject: str,
+    text_content: str,
+    html_content: Optional[str] = None,
+    meta: Optional[Dict[str, Any]] = None,
+) -> EmailResult:
+    """
+    Send one email through the configured provider.
+
+    Returns an EmailResult describing what happened. Raises EmailDeliveryError only
+    when the environment is production and no real provider is configured, since that
+    is a deployment fault the caller must surface rather than retry.
+    """
+    meta = meta or {}
+    action = meta.get("action")
+    provider = settings.resolved_email_provider
+    record = {
+        "to": to_email,
+        "email": to_email,
+        "subject": subject,
+        "text": text_content,
+        "html": html_content,
+        "sent_at": datetime.now(timezone.utc).isoformat(),
+        "token": meta.get("token"),
+        "meta": meta,
+    }
+
+    if settings.app_env == "production" and not settings.email_delivery_available:
+        logger.error(
+            "email.no_provider_configured",
+            to=to_email,
+            action=action,
+            provider=provider,
+        )
+        raise EmailDeliveryError(
+            "Email delivery is not configured on this deployment. "
+            "Set EMAIL_PROVIDER together with the matching credentials."
+        )
+
+    if provider == "resend":
+        if not settings.resend_configured:
+            result = EmailResult(
+                ok=False,
+                provider="resend",
+                error="EMAIL_PROVIDER=resend but RESEND_API_KEY or EMAIL_FROM is missing.",
+            )
+        else:
+            result = await _send_via_resend(to_email, subject, text_content, html_content)
+    elif provider == "smtp":
+        if not settings.smtp_configured:
+            result = EmailResult(
+                ok=False,
+                provider="smtp",
+                error="EMAIL_PROVIDER=smtp but SMTP_HOST is missing.",
+            )
+        else:
+            result = await _send_via_smtp(to_email, subject, text_content, html_content)
+    elif provider == "mock":
+        result = _send_via_mock(record)
+    else:
+        result = EmailResult(
+            ok=False,
+            provider=provider,
+            error=f"Unknown EMAIL_PROVIDER '{provider}'. Expected resend, smtp or mock.",
+        )
+
+    if result.ok:
+        logger.info(
+            "email.sent",
+            to=to_email,
+            subject=subject,
+            action=action,
+            provider=result.provider,
+            message_id=result.message_id,
+        )
+    else:
+        logger.error(
+            "email.send_failed",
+            to=to_email,
+            subject=subject,
+            action=action,
+            provider=result.provider,
+            error=result.error,
+        )
+    return result
+
+
+def _link(path: str, token: str, to_email: str) -> str:
+    """Build an absolute link into the frontend, encoding both query values."""
+    return (
+        f"{settings.frontend_url}{path}"
+        f"?token={quote(token, safe='')}&email={quote(to_email, safe='')}"
+    )
+
+
+async def send_verification_email(to_email: str, recipient_name: str, token: str) -> EmailResult:
     """Send one-time expiring email verification link/token."""
-    verify_url = f"{settings.frontend_url}/verify-email?token={token}&email={to_email}"
+    verify_url = _link("/verify-email", token, to_email)
     subject = f"Verify your {settings.app_name} account"
     text = (
         f"Hello {recipient_name},\n\n"
@@ -177,9 +302,9 @@ async def send_verification_email(to_email: str, recipient_name: str, token: str
     return await send_email(to_email, subject, text, html, meta={"action": "verify_email", "token": token})
 
 
-async def send_password_reset_email(to_email: str, recipient_name: str, token: str) -> bool:
+async def send_password_reset_email(to_email: str, recipient_name: str, token: str) -> EmailResult:
     """Send secure password reset link/token."""
-    reset_url = f"{settings.frontend_url}/reset-password?token={token}&email={to_email}"
+    reset_url = _link("/reset-password", token, to_email)
     subject = f"Password Reset Request — {settings.app_name}"
     text = (
         f"Hello {recipient_name},\n\n"

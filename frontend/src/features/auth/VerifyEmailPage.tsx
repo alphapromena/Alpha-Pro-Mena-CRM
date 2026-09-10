@@ -13,7 +13,12 @@ export const VerifyEmailPage: React.FC = () => {
   const { isRTL } = useTranslation();
 
   const [token, setToken] = useState(searchParams.get('token') || '');
-  const [email, setEmail] = useState(user?.email || '');
+  // The backend builds the link as ?token=...&email=..., so prefer the URL. A user
+  // arriving from that email has no session, which made the store the wrong source
+  // and left the resend action with no address to use.
+  const [email, setEmail] = useState(
+    searchParams.get('email') || user?.email || ''
+  );
   const [isLoading, setIsLoading] = useState(false);
   const [isResending, setIsResending] = useState(false);
   const [cooldown, setCooldown] = useState(0);

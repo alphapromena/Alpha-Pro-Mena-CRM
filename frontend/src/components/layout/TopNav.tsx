@@ -6,7 +6,7 @@ import { useNavigate } from 'react-router-dom';
 import { useTranslation } from '../../i18n';
 
 export const TopNav: React.FC = () => {
-  const { user, theme, setTheme, language, setLanguage, logout } = useAuthStore();
+  const { user, theme, setTheme, language, setLanguage, logout, isAuthenticated } = useAuthStore();
   const { t, isRTL } = useTranslation();
   const navigate = useNavigate();
 
@@ -34,10 +34,21 @@ export const TopNav: React.FC = () => {
   };
 
   useEffect(() => {
+    // Poll only while a session is live. This interval used to keep running after
+    // the session ended, producing a 401 from /notifications and a second 401 from
+    // the refresh it triggered, once a minute, for as long as the tab stayed open.
+    if (!isAuthenticated) return;
+
     fetchNotifications();
     const interval = setInterval(fetchNotifications, 60000);
-    return () => clearInterval(interval);
-  }, []);
+
+    const stop = () => clearInterval(interval);
+    window.addEventListener('auth:expired', stop);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('auth:expired', stop);
+    };
+  }, [isAuthenticated]);
 
   // Debounced search
   useEffect(() => {

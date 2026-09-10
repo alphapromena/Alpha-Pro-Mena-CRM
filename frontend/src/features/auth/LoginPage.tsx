@@ -18,8 +18,11 @@ export const LoginPage: React.FC = () => {
   const { fetchMe, language, setLanguage } = useAuthStore();
   const { isRTL } = useTranslation();
 
-  const [email, setEmail] = useState('saleh@alphapromena.com');
-  const [password, setPassword] = useState('Sales123!');
+  // Start empty. These previously defaulted to a real employee's address and a
+  // working plaintext password, which shipped in the public bundle and arrived
+  // pre-filled on the live login form.
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
@@ -75,22 +78,6 @@ export const LoginPage: React.FC = () => {
       setIsLoading(false);
     }
   };
-
-  const handleQuickSelect = (roleEmail: string) => {
-    setEmail(roleEmail);
-    setPassword('');
-    setError(null);
-  };
-
-  const quickAccounts = [
-    { label: 'Saleh', email: 'saleh@alphapromena.com', role: 'SALES' },
-    { label: 'Amin', email: 'amin@alphapromena.com', role: 'SALES' },
-    { label: 'Aseel', email: 'aseel@alphapromena.com', role: 'DATA OPS' },
-    { label: 'Abdallah', email: 'abdallah@alphapromena.com', role: 'MANAGER' },
-    { label: 'Qusai', email: 'qusai@alphapromena.com', role: 'TEAM LEAD' },
-    { label: 'Ghaida', email: 'ghaida@alphapromena.com', role: 'SALES' },
-    { label: 'Hassan', email: 'hassan@alphapromena.com', role: 'SALES' },
-  ];
 
   return (
     <div
@@ -458,88 +445,6 @@ export const LoginPage: React.FC = () => {
                     </button>
                   </div>
                 </form>
-              </div>
-            </div>
-
-            {/* Translucent Quick Account Switcher (Real Team Accounts) */}
-            <div
-              style={{
-                width: '100%',
-                padding: 'var(--space-3) var(--space-4)',
-                backgroundColor: 'rgba(18, 22, 30, 0.46)', // Translucent glass
-                backdropFilter: 'blur(16px)',
-                WebkitBackdropFilter: 'blur(16px)',
-                borderRadius: 'var(--radius-lg)',
-                border: '1px solid rgba(255, 255, 255, 0.12)',
-                boxShadow: '0 8px 24px rgba(0, 0, 0, 0.35)',
-              }}
-            >
-              <div
-                style={{
-                  fontSize: '10px',
-                  fontWeight: 800,
-                  color: 'rgba(255, 255, 255, 0.7)',
-                  textAlign: 'center',
-                  letterSpacing: '1px',
-                  marginBottom: 'var(--space-2)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: '6px',
-                }}
-              >
-                <Shield size={12} style={{ color: '#D4AF37' }} />
-                <span>{isRTL ? 'التبديل السريع لفريق العمل' : 'TEAM QUICK LOGIN'}</span>
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '6px' }}>
-                {quickAccounts.slice(0, 4).map((acc) => (
-                  <button
-                    key={acc.label}
-                    type="button"
-                    onClick={() => handleQuickSelect(acc.email)}
-                    className="btn btn-ghost btn-sm"
-                    style={{
-                      flexDirection: 'column',
-                      height: 'auto',
-                      padding: '6px 4px',
-                      gap: '2px',
-                      borderRadius: 'var(--radius-md)',
-                      border: email === acc.email ? '1px solid #FF1E57' : '1px solid rgba(255, 255, 255, 0.12)',
-                      backgroundColor: email === acc.email ? 'rgba(255, 30, 87, 0.28)' : 'rgba(255, 255, 255, 0.05)',
-                      backdropFilter: 'blur(8px)',
-                      transition: 'all 0.15s ease',
-                    }}
-                  >
-                    <span style={{ fontSize: '9px', color: 'rgba(255, 255, 255, 0.65)', fontWeight: 600 }}>{acc.role}</span>
-                    <span style={{ fontSize: '11px', fontWeight: 700, color: '#FFFFFF' }}>{acc.label}</span>
-                  </button>
-                ))}
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '6px', marginTop: '6px' }}>
-                {quickAccounts.slice(4).map((acc) => (
-                  <button
-                    key={acc.label}
-                    type="button"
-                    onClick={() => handleQuickSelect(acc.email)}
-                    className="btn btn-ghost btn-sm"
-                    style={{
-                      flexDirection: 'column',
-                      height: 'auto',
-                      padding: '6px 4px',
-                      gap: '2px',
-                      borderRadius: 'var(--radius-md)',
-                      border: email === acc.email ? '1px solid #FF1E57' : '1px solid rgba(255, 255, 255, 0.12)',
-                      backgroundColor: email === acc.email ? 'rgba(255, 30, 87, 0.28)' : 'rgba(255, 255, 255, 0.05)',
-                      backdropFilter: 'blur(8px)',
-                      transition: 'all 0.15s ease',
-                    }}
-                  >
-                    <span style={{ fontSize: '9px', color: 'rgba(255, 255, 255, 0.65)', fontWeight: 600 }}>{acc.role}</span>
-                    <span style={{ fontSize: '11px', fontWeight: 700, color: '#FFFFFF' }}>{acc.label}</span>
-                  </button>
-                ))}
               </div>
             </div>
 

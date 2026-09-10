@@ -3,6 +3,7 @@ import { RouterProvider } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { router } from './router';
 import { useAuthStore } from './store/authStore';
+import { hasSessionHint } from './lib/apiClient';
 import { LoadingScreen } from './components/feedback/LoadingScreen';
 
 const queryClient = new QueryClient({
@@ -19,7 +20,14 @@ export const App: React.FC = () => {
   const { fetchMe, isLoading } = useAuthStore();
 
   useEffect(() => {
-    fetchMe();
+    // Only ask the server who we are when the browser says a session exists.
+    // Calling this unconditionally meant every anonymous visit to the login page
+    // fired /auth/me and then /auth/refresh, both 401, before the router mounted.
+    if (hasSessionHint()) {
+      fetchMe();
+    } else {
+      useAuthStore.getState().setUser(null);
+    }
   }, []);
 
   // Session ended (refresh token expired/revoked): drop the user so the route guard
