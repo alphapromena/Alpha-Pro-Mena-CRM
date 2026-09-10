@@ -1,6 +1,12 @@
 """
 Google Sheets Sync Service — Idempotent lead ingestion pipeline.
 Follows google-sheets-data-integration skill guidelines.
+
+Extended to use app.imports reconciliation library so that:
+- Legacy contacts (without import_key) are matched by phone or email.
+- Owner resolution uses the same authoritative salesperson map.
+- Aseel (DATA_OPS) is never assigned as the owner of imported contacts.
+- DNC contacts are never overwritten.
 """
 import hashlib
 import json
@@ -15,7 +21,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.core.exceptions import ValidationError, AppError
-from app.core.security import normalize_email, normalize_phone
+from app.core.security import normalize_email as core_normalize_email
+from app.core.security import normalize_phone as core_normalize_phone
+from app.imports.normalizers import normalize_email as import_normalize_email
+from app.imports.normalizers import normalize_phone as import_normalize_phone
+from app.imports.normalizers import make_import_key
+from app.imports.db_writer import (
+    get_or_create_company,
+    load_db_snapshot,
+    resolve_salesperson_map,
+)
+from app.imports.reconciler import match_to_db
 from app.models.contact import Contact, ContactStatus, ContactPriority
 from app.models.company import Company
 from app.models.user import User
@@ -23,6 +39,9 @@ from app.models.integrations import GoogleSheetsSyncConfig, GoogleSheetsSyncRun,
 
 logger = structlog.get_logger(__name__)
 settings = get_settings()
+
+# Lazily cached per-sync-run; reset at the start of each run_sync call
+_SHEETS_COMPANY_CACHE: Dict[str, uuid.UUID] = {}
 
 
 class GoogleSheetsSyncService:
@@ -57,6 +76,11 @@ class GoogleSheetsSyncService:
         )
         self.db.add(run)
         await self.db.flush()
+
+        # Pre-load DB snapshot and salesperson map once per sync run
+        self._db_snapshot = await load_db_snapshot(self.db)
+        self._sp_map = await resolve_salesperson_map(self.db)
+        self._company_cache: Dict[str, uuid.UUID] = {}
 
         logger.info("sheets_sync.started", config_id=str(config.id), run_id=str(run.id))
 
@@ -190,11 +214,11 @@ class GoogleSheetsSyncService:
         if not first_name:
             first_name = email_raw.split("@")[0] if email_raw else "Lead"
 
-        norm_email = normalize_email(email_raw) if email_raw else None
-        norm_phone = normalize_phone(phone_raw) if phone_raw else None
+        # Use reconciler normalizers (conservative — no auto country-code expansion)
+        norm_email = import_normalize_email(email_raw) if email_raw else None
+        norm_phone = import_normalize_phone(phone_raw) if phone_raw else None
 
         if norm_email and not re.match(r"^[^@]+@[^@]+\.[^@]+$", norm_email):
-            # Invalid email format
             run.rows_error += 1
             self.db.add(
                 SyncErrorLog(
@@ -207,56 +231,72 @@ class GoogleSheetsSyncService:
             )
             return
 
-        # Deterministic Idempotency Key
-        import_key = hashlib.sha256(
-            f"{config.spreadsheet_id}:{config.sheet_name}:{row_index}".encode()
-        ).hexdigest()
+        # Build a minimal LeadRow for snapshot matching (no full parse needed)
+        from app.imports.workbook_reader import LeadRow
+        import_key = make_import_key(
+            email=norm_email or "",
+            phone=norm_phone or "",
+            first_name=first_name,
+            last_name=last_name,
+        )
+        probe_row = LeadRow(
+            first_name=first_name, last_name=last_name,
+            normalized_email=norm_email or "",
+            normalized_phone=norm_phone or "",
+            import_key=import_key,
+        )
 
-        # Check for exact duplicate in CRM (by email, phone, or import key)
-        existing_contact = None
-        if norm_email:
-            existing_contact = (
-                await self.db.execute(select(Contact).where(Contact.normalized_email == norm_email, Contact.deleted_at.is_(None)))
-            ).scalar_one_or_none()
-        elif norm_phone:
-            existing_contact = (
-                await self.db.execute(select(Contact).where(Contact.normalized_phone == norm_phone, Contact.deleted_at.is_(None)))
-            ).scalar_one_or_none()
-
-        if not existing_contact and import_key:
-            existing_contact = (
-                await self.db.execute(select(Contact).where(Contact.import_key == import_key, Contact.deleted_at.is_(None)))
-            ).scalar_one_or_none()
-
-        # Sales Person mapping if present
-        owner_id = None
-        sales_person_raw = str(row_dict.get(mapping.get("sales_person", "Sales Person"), "")).strip()
-        if not sales_person_raw:
-            sales_person_raw = str(row_dict.get("Sales Person", "") or row_dict.get("Salesperson", "") or row_dict.get("Owner", "")).strip()
-        if sales_person_raw:
-            user_stmt = select(User).where(
-                or_(
-                    User.email.ilike(sales_person_raw),
-                    User.first_name.ilike(f"%{sales_person_raw}%"),
-                    (User.first_name + " " + User.last_name).ilike(f"%{sales_person_raw}%"),
+        # Match against DB snapshot (includes legacy contacts without import_key)
+        snap = getattr(self, "_db_snapshot", None)
+        existing_id = None
+        if snap is not None:
+            existing_id, _reason = match_to_db(probe_row, snap)
+        else:
+            # Fallback for test contexts without pre-loaded snapshot
+            if norm_email:
+                r = await self.db.execute(
+                    select(Contact.id).where(
+                        Contact.normalized_email == norm_email,
+                        Contact.deleted_at.is_(None),
+                    )
                 )
-            ).limit(1)
-            matched_user = (await self.db.execute(user_stmt)).scalar_one_or_none()
-            if matched_user:
-                owner_id = matched_user.id
+                row_ = r.scalar_one_or_none()
+                if row_:
+                    existing_id = row_
+            if not existing_id and norm_phone:
+                r = await self.db.execute(
+                    select(Contact.id).where(
+                        Contact.normalized_phone == norm_phone,
+                        Contact.deleted_at.is_(None),
+                    )
+                )
+                row_ = r.scalar_one_or_none()
+                if row_:
+                    existing_id = row_
 
-        # Company association or creation
-        company_id = None
-        if company_raw:
-            comp_stmt = select(Company).where(Company.name.ilike(company_raw))
-            existing_company = (await self.db.execute(comp_stmt)).scalar_one_or_none()
-            if existing_company:
-                company_id = existing_company.id
+        # Salesperson resolution — uses authoritative map, excludes Aseel
+        owner_id = None
+        sales_person_raw = str(
+            row_dict.get(mapping.get("sales_person", "Sales Person"), "")
+            or row_dict.get("Sales Person", "")
+            or row_dict.get("Salesperson", "")
+            or row_dict.get("Owner", "")
+        ).strip()
+        sp_map = getattr(self, "_sp_map", {})
+        if sales_person_raw:
+            sp_lower = sales_person_raw.lower()
+            if sp_lower in sp_map:
+                owner_id = sp_map[sp_lower]
             else:
-                new_comp = Company(name=company_raw, industry=industry, country=country)
-                self.db.add(new_comp)
-                await self.db.flush()
-                company_id = new_comp.id
+                # Partial match fallback
+                for key, uid in sp_map.items():
+                    if key in sp_lower or sp_lower in key:
+                        owner_id = uid
+                        break
+
+        # Company association or creation (uses shared cache to prevent duplicates)
+        company_cache = getattr(self, "_company_cache", {})
+        company_id = await get_or_create_company(self.db, company_raw, company_cache)
 
         # Extract historical attempts from columns like "1st Attempts", "2nd Attempts", "3rd Attempts", "Attempt 1"
         historical_attempts = []
@@ -273,9 +313,47 @@ class GoogleSheetsSyncService:
         # Sort attempts by attempt number
         historical_attempts.sort(key=lambda x: x[0])
 
+        # Load full existing_contact if we have an id
+        existing_contact = None
+        if existing_id is not None:
+            res = await self.db.execute(
+                select(Contact).where(
+                    Contact.id == existing_id,
+                    Contact.deleted_at.is_(None),
+                )
+            )
+            existing_contact = res.scalar_one_or_none()
+
         if existing_contact:
             run.rows_duplicate += 1
-            # Idempotent skip or duplicate link
+            # Never touch DNC contacts
+            if existing_contact.is_dnc:
+                return
+            # Enrich blank fields only — never overwrite non-blank CRM values
+            changed = False
+            if not existing_contact.email and email_raw:
+                existing_contact.email = email_raw
+                existing_contact.normalized_email = norm_email
+                changed = True
+            if not existing_contact.phone and phone_raw:
+                existing_contact.phone = phone_raw
+                existing_contact.normalized_phone = norm_phone
+                changed = True
+            if not existing_contact.company_id and company_id:
+                existing_contact.company_id = company_id
+                changed = True
+            if not existing_contact.position and position:
+                existing_contact.position = position
+                changed = True
+            if not existing_contact.owner_id and owner_id:
+                existing_contact.owner_id = owner_id
+                changed = True
+            if not existing_contact.import_key and import_key:
+                existing_contact.import_key = import_key
+                changed = True
+            if changed:
+                self.db.add(existing_contact)
+                await self.db.flush()
             target_contact = existing_contact
         else:
             run.rows_imported += 1
