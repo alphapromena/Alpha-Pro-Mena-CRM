@@ -159,6 +159,14 @@ class Settings(BaseSettings):
     admin_first_name: str = "System"
     admin_last_name: str = "Administrator"
 
+    # Bootstrap password for new team members (must be set in production).
+    # See auto_migrate._get_bootstrap_password() for enforcement logic.
+    bootstrap_password: str = ""
+
+    # Migration endpoint protection token (set MIGRATE_TOKEN env var in production).
+    # POST /api/v1/admin/migrate returns 404 when this is unset.
+    migrate_token: str = ""
+
     @model_validator(mode="after")
     def _finalize(self) -> "Settings":
         self.database_url, self.database_pooled = normalize_database_url(self.database_url)

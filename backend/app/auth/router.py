@@ -1,4 +1,4 @@
-"""
+﻿"""
 Auth router — login, logout, refresh, me, change-password, email verification,
 activation password set, and password reset.
 Rate limited on sensitive auth endpoints.
@@ -300,31 +300,3 @@ async def dev_mail(email: Optional[str] = None):
         target = email.strip().lower()
         msgs = [m for m in msgs if str(m.get("to", "")).strip().lower() == target]
     return {"messages": msgs}
-
-
-@router.post("/debug-login")
-async def debug_login(
-    body: LoginRequest,
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    TEMPORARY DIAGNOSTIC ENDPOINT — returns the raw exception if login fails.
-    Remove after production issue is resolved.
-    """
-    import traceback as tb_mod
-    try:
-        auth_service = AuthService(db)
-        access_token, refresh_token, user = await auth_service.login(
-            email=body.email,
-            password=body.password,
-            ip_address="debug",
-        )
-        return {"status": "ok", "user_id": str(user.id), "role": user.role}
-    except Exception as exc:
-        full_tb = tb_mod.format_exc()
-        return {
-            "status": "error",
-            "exception_type": type(exc).__name__,
-            "exception_message": str(exc),
-            "traceback": full_tb,
-        }

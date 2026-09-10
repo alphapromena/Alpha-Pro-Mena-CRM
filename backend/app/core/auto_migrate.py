@@ -17,6 +17,30 @@ from app.models.user import User, UserRole, Team
 settings = get_settings()
 logger = structlog.get_logger(__name__)
 
+
+def _get_bootstrap_password() -> str:
+    """
+    Return the bootstrap password from the BOOTSTRAP_PASSWORD environment variable.
+    In production, missing this variable is a hard startup error — team members
+    cannot log in without a known bootstrap credential.
+    In non-production environments, falls back to a local-dev-only default and
+    logs a warning so developers are not blocked.
+    """
+    pw = getattr(settings, "bootstrap_password", "") or ""
+    if pw:
+        return pw
+    if settings.app_env == "production":
+        raise RuntimeError(
+            "BOOTSTRAP_PASSWORD env var is not set. "
+            "Set it on Vercel before deploying. "
+            "All bootstrap team accounts require a known temporary password."
+        )
+    logger.warning(
+        "auto_migrate.bootstrap_password_missing",
+        hint="Set BOOTSTRAP_PASSWORD env var. Using local-dev fallback.",
+    )
+    return "ChangeMe_LocalDev_Only!"
+
 _migration_lock = asyncio.Lock()
 _migration_completed = False
 
@@ -217,7 +241,7 @@ async def _bootstrap_team_users(session: AsyncSession) -> None:
     - Existing users who already set a personal password: NEVER overwritten.
       Only unlocks/reactivates if locked or inactive.
     """
-    bootstrap_hash = hash_password("123456789")
+    bootstrap_hash = hash_password(_get_bootstrap_password())
 
     for member in BOOTSTRAP_MEMBERS:
         norm = normalize_email(member["email"])
