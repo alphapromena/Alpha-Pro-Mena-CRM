@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate, useSearchParams, Link } from 'react-router-dom';
+import { useNavigate, useSearchParams, useLocation, Link } from 'react-router-dom';
 import { useAuthStore } from '../../store/authStore';
 import { api, ApiError } from '../../lib/apiClient';
 import { Mail, CheckCircle2, AlertCircle, RefreshCw, ArrowRight } from 'lucide-react';
@@ -12,13 +12,21 @@ export const VerifyEmailPage: React.FC = () => {
   const { user, fetchMe } = useAuthStore();
   const { isRTL } = useTranslation();
 
+  const location = useLocation();
+  const navState = (location.state || {}) as { verificationSent?: boolean; email?: string };
+
   const [token, setToken] = useState(searchParams.get('token') || '');
-  // The backend builds the link as ?token=...&email=..., so prefer the URL. A user
-  // arriving from that email has no session, which made the store the wrong source
-  // and left the resend action with no address to use.
+  // Three possible sources, in order of reliability: the signed-in session, the
+  // address login just handed over, then the ?email= on an emailed link. Someone who
+  // followed a link from their inbox has no session, so the store alone was the wrong
+  // source and left the resend action with nothing to send to.
   const [email, setEmail] = useState(
-    searchParams.get('email') || user?.email || ''
+    user?.email || navState.email || searchParams.get('email') || ''
   );
+  // Signed-in users never type their address; the field is only for the anonymous
+  // case, where someone opened the page without a session.
+  const isAuthenticated = Boolean(user?.email);
+  const [justSent, setJustSent] = useState(Boolean(navState.verificationSent));
   const [isLoading, setIsLoading] = useState(false);
   const [isResending, setIsResending] = useState(false);
   const [cooldown, setCooldown] = useState(0);
@@ -34,6 +42,22 @@ export const VerifyEmailPage: React.FC = () => {
       handleVerify(urlToken);
     }
   }, [searchParams]);
+
+  // fetchMe resolves after this component mounts, so the initial state above can be
+  // empty for a signed-in user. Adopt the session address as soon as it arrives.
+  useEffect(() => {
+    if (user?.email && user.email !== email) {
+      setEmail(user.email);
+    }
+  }, [user?.email]);
+
+  // A code dispatched by login starts the same cooldown the resend button uses, so
+  // the user is not invited to immediately request another one.
+  useEffect(() => {
+    if (navState.verificationSent) {
+      setCooldown(60);
+    }
+  }, []);
 
   // Cooldown countdown timer
   useEffect(() => {
@@ -94,6 +118,7 @@ export const VerifyEmailPage: React.FC = () => {
     try {
       const res = await api.post<any>('/auth/resend-verification', { email: targetEmail });
       setMessage(res?.message || (isRTL ? 'إذا كان الحساب مؤهلاً، تم إرسال رمز تحقق جديد.' : 'If eligible, a fresh verification token has been sent.'));
+      setJustSent(true);
       setCooldown(60); // 60s cooldown
     } catch (err: any) {
       if (err instanceof ApiError) {
@@ -214,6 +239,44 @@ export const VerifyEmailPage: React.FC = () => {
             }}
             style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}
           >
+            {justSent && email && (
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 'var(--space-2)',
+                  padding: 'var(--space-3)',
+                  backgroundColor: '#eff6ff',
+                  border: '1px solid #3b82f6',
+                  borderRadius: 'var(--radius-md)',
+                  color: '#1e3a8a',
+                  fontSize: '13px',
+                }}
+              >
+                <Mail size={16} style={{ flexShrink: 0 }} />
+                <span>
+                  {isRTL ? 'أرسلنا رمز تحقق إلى ' : 'We sent a verification code to '}
+                  <strong style={{ wordBreak: 'break-all' }}>{email}</strong>
+                </span>
+              </div>
+            )}
+
+            {!isAuthenticated && (
+              <div className="form-group">
+                <label className="form-label" style={{ fontWeight: 600 }}>
+                  {isRTL ? 'البريد الإلكتروني' : 'Email Address'}
+                </label>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="name@alphapromena.com"
+                  className="form-input"
+                  autoComplete="email"
+                />
+              </div>
+            )}
+
             <div className="form-group">
               <label className="form-label" style={{ fontWeight: 600 }}>
                 {isRTL ? 'رمز التحقق (Verification Token)' : 'Verification Token'}
@@ -268,24 +331,41 @@ export const VerifyEmailPage: React.FC = () => {
                 gap: 'var(--space-2)',
               }}
             >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span className="text-xs text-muted">
-                  {isRTL ? 'لم يصلك الرمز؟' : "Didn't receive a token?"}
-                </span>
-                <button
-                  type="button"
-                  disabled={isResending || cooldown > 0}
-                  onClick={handleResend}
-                  className="btn btn-ghost btn-sm text-xs font-semibold"
-                  style={{ color: cooldown > 0 ? 'var(--neutral-400)' : 'var(--color-primary)' }}
-                >
-                  {cooldown > 0
-                    ? `${isRTL ? 'انتظر' : 'Resend in'} ${cooldown}s`
-                    : isResending
-                    ? (isRTL ? 'جاري الإرسال...' : 'Sending...')
-                    : (isRTL ? 'إعادة إرسال الرمز' : 'Resend verification')}
-                </button>
-              </div>
+              <span className="text-xs text-muted" style={{ textAlign: 'center' }}>
+                {isRTL ? 'لم يصلك الرمز؟' : "Didn't receive a token?"}
+              </span>
+              <button
+                type="button"
+                disabled={isResending || cooldown > 0 || !email.trim()}
+                onClick={handleResend}
+                className="btn btn-secondary"
+                style={{
+                  width: '100%',
+                  padding: '10px',
+                  fontWeight: 600,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '8px',
+                  opacity: cooldown > 0 || !email.trim() ? 0.6 : 1,
+                }}
+              >
+                {isResending ? (
+                  <>
+                    <RefreshCw size={15} className="animate-spin" />
+                    <span>{isRTL ? 'جاري الإرسال...' : 'Sending...'}</span>
+                  </>
+                ) : cooldown > 0 ? (
+                  <span>
+                    {isRTL ? `إعادة الإرسال خلال ${cooldown} ثانية` : `Resend in ${cooldown}s`}
+                  </span>
+                ) : (
+                  <>
+                    <Mail size={15} />
+                    <span>{isRTL ? 'إعادة إرسال الرمز' : 'Resend verification code'}</span>
+                  </>
+                )}
+              </button>
 
               <div style={{ display: 'flex', justifyContent: 'center', marginTop: 'var(--space-2)' }}>
                 <Link to="/login" className="text-xs text-muted hover:underline">

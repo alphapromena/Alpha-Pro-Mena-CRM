@@ -24,6 +24,9 @@ class TokenResponse(BaseModel):
     expires_in: int  # seconds
     must_change_password: bool = False
     email_verified: bool = False
+    # True when this request actually dispatched a verification email, so the UI can
+    # say "we just sent a code to <address>" instead of asking for one out of nowhere.
+    verification_sent: bool = False
 
 
 class UserMeResponse(BaseModel):

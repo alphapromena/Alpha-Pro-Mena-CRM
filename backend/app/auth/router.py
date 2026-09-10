@@ -124,11 +124,17 @@ async def login(
 
     _set_session_cookies(response, access_token, refresh_token)
 
+    # An unverified account is redirected to /verify-email by the router, so send the
+    # code it will ask for rather than stranding the user on a page waiting for an
+    # email nothing dispatched. This never fails the login.
+    verification_sent = await auth_service.ensure_verification_email(user)
+
     return TokenResponse(
         access_token=access_token,
         expires_in=settings.jwt_access_token_expire_minutes * 60,
         must_change_password=getattr(user, "must_change_password", False),
         email_verified=getattr(user, "email_verified", False),
+        verification_sent=verification_sent,
     )
 
 

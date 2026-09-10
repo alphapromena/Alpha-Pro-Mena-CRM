@@ -192,9 +192,22 @@ class AuthService:
         logger.info("auth.password_changed", user_id=str(user.id))
 
     async def activate_password(
-        self, user: User, new_password: str, current_password: Optional[str] = None
+        self,
+        user: User,
+        new_password: str,
+        current_password: Optional[str] = None,
+        verified_via_email_token: bool = False,
     ) -> tuple[User, str, str]:
-        """First-login or forced password change activation."""
+        """
+        First-login or forced password change activation.
+
+        `verified_via_email_token` marks the account verified, and should be set only
+        when the caller established that the user arrived through a link sent to their
+        address. The current activation flow does not: the user authenticates with a
+        bootstrap password distributed out of band, which proves nothing about the
+        mailbox. It is left False there deliberately rather than granting verification
+        to anyone holding a shared temporary password.
+        """
         if current_password and not verify_password(current_password, user.password_hash):
             raise UnauthorizedError("Current password is incorrect.")
 
@@ -210,6 +223,10 @@ class AuthService:
 
         user.password_hash = hash_password(new_password)
         user.must_change_password = False
+        if verified_via_email_token:
+            user.email_verified = True
+            user.verification_token_hash = None
+            user.verification_token_expires_at = None
         self.db.add(user)
         await self.db.flush()
 
@@ -266,6 +283,71 @@ class AuthService:
             message_id=result.message_id,
         )
         return raw_token
+
+    async def ensure_verification_email(self, user: User) -> bool:
+        """
+        Send a verification email on login if the account needs one.
+
+        Returns True only when a message was actually handed to the provider, so the
+        response can tell the user to go and look for it.
+
+        Never raises. A login must not fail because the mail provider is down; the
+        caller reports verification_sent=false and the user can retry from the
+        verification page.
+
+        Nothing is sent when the account is already verified, when an unexpired token
+        is still outstanding, or when one was emailed inside the cooldown window.
+        """
+        if getattr(user, "email_verified", False):
+            return False
+
+        now = datetime.now(timezone.utc)
+
+        outstanding_expiry = _as_utc(user.verification_token_expires_at)
+        if user.verification_token_hash and outstanding_expiry and outstanding_expiry > now:
+            logger.info("auth.verification_already_pending", user_id=str(user.id))
+            return False
+
+        sent_at = _as_utc(user.verification_sent_at)
+        if sent_at:
+            seconds_since = (now - sent_at).total_seconds()
+            cooldown = settings.verification_resend_cooldown_seconds
+            if seconds_since < cooldown:
+                logger.info(
+                    "auth.verification_cooldown_on_login",
+                    user_id=str(user.id),
+                    seconds_remaining=max(1, int(cooldown - seconds_since)),
+                )
+                return False
+
+        # Remember the current token state. create_and_send_verification stages a new
+        # token before it sends, and on failure that write must not survive: it would
+        # store a token the user never received and, worse, satisfy the "outstanding
+        # token" check above so no later attempt would ever send one.
+        previous = (
+            user.verification_token_hash,
+            user.verification_token_expires_at,
+            user.verification_sent_at,
+        )
+
+        try:
+            await self.create_and_send_verification(user)
+            return True
+        except Exception as exc:
+            (
+                user.verification_token_hash,
+                user.verification_token_expires_at,
+                user.verification_sent_at,
+            ) = previous
+            self.db.add(user)
+            await self.db.flush()
+            logger.error(
+                "auth.login_verification_send_failed",
+                user_id=str(user.id),
+                error=str(exc),
+                exception_type=type(exc).__name__,
+            )
+            return False
 
     async def verify_email(self, token: str, email: Optional[str] = None) -> User:
         """
@@ -474,6 +556,13 @@ class AuthService:
         user.is_locked = False
         user.locked_until = None
         user.login_attempts = 0
+        # Completing a reset from an emailed link is proof the user controls the
+        # mailbox, which is exactly what verification asks for. Marking the account
+        # verified here stops a reset from dropping the user onto /verify-email to
+        # wait for a second email. Any pending verification token is now redundant.
+        user.email_verified = True
+        user.verification_token_hash = None
+        user.verification_token_expires_at = None
         self.db.add(user)
         await self.db.flush()
 

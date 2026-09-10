@@ -225,6 +225,14 @@ async def _migrate_postgresql(session: AsyncSession) -> None:
     END $$;
     """))
 
+    # ── 1b. backfill accounts that predate email verification ───────────────
+    # Guarded because the DDL above is itself conditional on the table existing.
+    users_present = (await session.execute(
+        text("SELECT to_regclass('public.users')")
+    )).scalar()
+    if users_present is not None:
+        await _backfill_pre_verification_accounts(session)
+
     # ── 2. demos table ──────────────────────────────────────────────────────
     await session.execute(text("""
     DO $$
@@ -303,6 +311,40 @@ async def _stamp_alembic_version(session: AsyncSession) -> None:
         )
 
 
+async def _backfill_pre_verification_accounts(session: AsyncSession) -> int:
+    """
+    Mark accounts that predate email verification as verified. Returns rows updated.
+
+    The email_verified column was added with DEFAULT FALSE, which retroactively made
+    every existing account unverified and sent the whole team to /verify-email.
+
+    Only accounts that already set a personal password are touched. Those people
+    proved control of the account before verification existed, and there is no way for
+    them to verify now without help. The three conditions are the safety:
+
+      must_change_password = FALSE   still-bootstrapped accounts are excluded, so a
+                                     shared temporary password never self-verifies
+      verification_token_hash IS NULL  someone mid-verification is left alone
+      deleted_at IS NULL             soft-deleted rows stay untouched
+
+    Idempotent: the email_verified = FALSE predicate means a second run matches
+    nothing.
+    """
+    result = await session.execute(text(
+        "UPDATE users SET email_verified = TRUE "
+        "WHERE email_verified = FALSE "
+        "AND must_change_password = FALSE "
+        "AND verification_token_hash IS NULL "
+        "AND deleted_at IS NULL"
+    ))
+    updated = result.rowcount or 0
+    if updated:
+        logger.info("auto_migrate.verification_backfilled", rows_updated=updated)
+    else:
+        logger.info("auto_migrate.verification_backfill_noop")
+    return updated
+
+
 # ─── SQLite DDL (local dev only) ───────────────────────────────────────────────
 
 async def _migrate_sqlite(session: AsyncSession) -> None:
@@ -329,6 +371,12 @@ async def _migrate_sqlite(session: AsyncSession) -> None:
             await session.execute(
                 text(f"ALTER TABLE users ADD COLUMN {col} {definition}")
             )
+
+    # Same backfill as the PostgreSQL path. An empty `cols` means there is no users
+    # table yet, in which case the ALTERs above would have failed and there is
+    # nothing to backfill.
+    if cols:
+        await _backfill_pre_verification_accounts(session)
 
 
 # ─── Bootstrap team accounts ───────────────────────────────────────────────────
