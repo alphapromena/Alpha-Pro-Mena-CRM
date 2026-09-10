@@ -192,9 +192,22 @@ class AuthService:
         logger.info("auth.password_changed", user_id=str(user.id))
 
     async def activate_password(
-        self, user: User, new_password: str, current_password: Optional[str] = None
+        self,
+        user: User,
+        new_password: str,
+        current_password: Optional[str] = None,
+        verified_via_email_token: bool = False,
     ) -> tuple[User, str, str]:
-        """First-login or forced password change activation."""
+        """
+        First-login or forced password change activation.
+
+        `verified_via_email_token` marks the account verified, and should be set only
+        when the caller established that the user arrived through a link sent to their
+        address. The current activation flow does not: the user authenticates with a
+        bootstrap password distributed out of band, which proves nothing about the
+        mailbox. It is left False there deliberately rather than granting verification
+        to anyone holding a shared temporary password.
+        """
         if current_password and not verify_password(current_password, user.password_hash):
             raise UnauthorizedError("Current password is incorrect.")
 
@@ -210,6 +223,10 @@ class AuthService:
 
         user.password_hash = hash_password(new_password)
         user.must_change_password = False
+        if verified_via_email_token:
+            user.email_verified = True
+            user.verification_token_hash = None
+            user.verification_token_expires_at = None
         self.db.add(user)
         await self.db.flush()
 
@@ -474,6 +491,13 @@ class AuthService:
         user.is_locked = False
         user.locked_until = None
         user.login_attempts = 0
+        # Completing a reset from an emailed link is proof the user controls the
+        # mailbox, which is exactly what verification asks for. Marking the account
+        # verified here stops a reset from dropping the user onto /verify-email to
+        # wait for a second email. Any pending verification token is now redundant.
+        user.email_verified = True
+        user.verification_token_hash = None
+        user.verification_token_expires_at = None
         self.db.add(user)
         await self.db.flush()
 
