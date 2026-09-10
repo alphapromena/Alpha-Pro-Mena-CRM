@@ -43,6 +43,21 @@ from app.config import get_settings
 settings = get_settings()
 logger = structlog.get_logger(__name__)
 
+def _as_utc(value: Optional[datetime]) -> Optional[datetime]:
+    """
+    Coerce a stored timestamp to an aware UTC datetime.
+
+    Some backends hand back naive datetimes, and comparing one to an aware "now"
+    raises TypeError. The token paths already did this inline; the lockout path did
+    not, which only stayed hidden because lockout never engaged.
+    """
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
+
+
 MAX_LOGIN_ATTEMPTS = 5
 LOCKOUT_DURATION_MINUTES = 15
 LOCKOUT_HARD_ATTEMPTS = 10
@@ -79,9 +94,10 @@ class AuthService:
         # answered 401 for a wrong password but 423 for the right one, so an attacker
         # who had already tripped the lockout could still confirm a correct guess.
         if user and user.is_locked:
-            if user.locked_until and datetime.now(timezone.utc) < user.locked_until:
+            locked_until = _as_utc(user.locked_until)
+            if locked_until and datetime.now(timezone.utc) < locked_until:
                 raise AccountLockedError(
-                    f"Account locked until {user.locked_until.strftime('%H:%M UTC')}."
+                    f"Account locked until {locked_until.strftime('%H:%M UTC')}."
                 )
             # Lockout window has passed — clear it and continue with this attempt.
             await self._reset_login_attempts(user)

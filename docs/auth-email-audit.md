@@ -242,6 +242,36 @@ Recording these so the next reader does not re-derive them.
 
 ---
 
+## Addendum: found while fixing, not while auditing
+
+Two further defects surfaced during implementation. Both are fixed in the commits on
+this branch.
+
+### A1 — A locked account leaked a password oracle (High)
+
+`backend/app/auth/service.py`, login path.
+
+The lockout check ran after the password check. A locked account therefore answered
+401 for a wrong password and 423 for the correct one. An attacker who had already
+tripped the lockout could keep guessing and read the status code to confirm a hit, so
+locking the account made the credential easier to find rather than harder.
+
+Lockout is now resolved before the credential result is used, and both cases answer
+423 identically. There is a regression test for it.
+
+### A2 — The lockout comparison crashed on a naive timestamp (High, latent)
+
+Comparing `locked_until` to an aware "now" raises `TypeError: can't compare
+offset-naive and offset-aware datetimes` when the backend returns a naive value. The
+token paths already coerced to UTC inline; the lockout path did not.
+
+This was unreachable while C2 was live, because the account never actually locked.
+Fixing C2 made it reachable, so it would have become a 500 on every login attempt
+against a locked account. Caught by the new lockout test, then fixed with a shared
+coercion helper.
+
+---
+
 ## Open question for the maintainer
 
 Fixing H5 means deleting the quick-login buttons from the login page, which is a visible product change beyond the flows in scope. C3, the pre-filled password, is being fixed regardless, because emptying a form field is not a feature change and the credential is exposed. The roster buttons are held pending a decision.
