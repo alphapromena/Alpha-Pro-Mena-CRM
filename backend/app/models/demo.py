@@ -6,7 +6,7 @@ from datetime import datetime
 from enum import Enum as PyEnum
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy import Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -77,6 +77,8 @@ class Demo(UUIDMixin, TimestampMixin, Base):
     is_historical: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
     historical_source: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     historical_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    source_sheet: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    source_row: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
     # Ownership & Audit actor IDs
     created_by_id: Mapped[Optional[uuid.UUID]] = mapped_column(

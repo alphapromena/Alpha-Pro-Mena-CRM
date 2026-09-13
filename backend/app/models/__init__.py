@@ -26,6 +26,7 @@ from app.models.integrations import (
     SavedFilter,
 )
 from app.models.activity import EmailActivity, WhatsAppActivity
+from app.models.leads_archive import LeadsArchive
 
 __all__ = [
     "TimestampMixin", "UUIDMixin", "SoftDeleteMixin",
@@ -47,4 +48,5 @@ __all__ = [
     "GoogleSheetsSyncConfig", "GoogleSheetsSyncRun", "SyncErrorLog",
     "LeadDistributionRule", "LeadAssignment", "SavedFilter",
     "EmailActivity", "WhatsAppActivity",
+    "LeadsArchive",
 ]

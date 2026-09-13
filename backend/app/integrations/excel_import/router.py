@@ -43,6 +43,7 @@ _MAX_FILE_BYTES = 50 * 1024 * 1024  # 50 MB
 async def import_excel(
     file: UploadFile = File(..., description="Excel workbook (.xlsx)"),
     sheet_name: Optional[str] = Form(None, description="Single sheet name to import"),
+    mode: Optional[str] = Form(None, description="Import mode: 'sheet16_replacement' or standard"),
     dry_run: bool = Form(False, description="Preview only — no database writes"),
     current_user: User = Depends(require_data_ops_or_above),
     db: AsyncSession = Depends(get_db),
@@ -83,6 +84,20 @@ async def import_excel(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Could not open workbook: {exc}",
         )
+
+    # ── Check for Sheet16 Authoritative Data Replacement Mode ───────────
+    if mode == "sheet16_replacement" or (not sheet_name and "Sheet16" in wb.sheetnames and "Companies" in wb.sheetnames):
+        from app.imports.sheet16_data_replacer import Sheet16DataReplacer
+        replacer = Sheet16DataReplacer(db, dry_run=dry_run)
+        rep = await replacer.execute(wb)
+        wb.close()
+        return {
+            "message": "Sheet16 authoritative data replacement executed." if not dry_run else "Sheet16 replacement dry run completed.",
+            "mode": "sheet16_replacement",
+            "dry_run": dry_run,
+            "uploaded_by": str(current_user.id),
+            "report": rep,
+        }
 
     from app.imports.workbook_reader import (
         GULF_LEADS_SHEET_CONFIGS,
