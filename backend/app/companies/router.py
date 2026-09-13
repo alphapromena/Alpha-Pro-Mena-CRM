@@ -66,6 +66,47 @@ def _company_dict(c: Company) -> dict:
     }
 
 
+@router.get("/selector")
+async def companies_selector(
+    search: Optional[str] = Query(None, max_length=200),
+    per_page: int = Query(20, ge=1, le=100),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Lightweight company selector for async search dropdowns (Demo, Follow-up forms).
+    Returns id, name, country, industry.
+    No arbitrary cap — server-side search returns matching subset only.
+    """
+    stmt = (
+        select(Company)
+        .where(Company.deleted_at.is_(None))
+    )
+    if search and search.strip():
+        q = f"%{search.strip()}%"
+        stmt = stmt.where(
+            or_(
+                Company.name.ilike(q),
+                Company.country.ilike(q),
+                Company.industry.ilike(q),
+            )
+        )
+    stmt = stmt.order_by(Company.name.asc()).limit(per_page)
+    companies = (await db.execute(stmt)).scalars().all()
+    return {
+        "data": [
+            {
+                "id": str(c.id),
+                "name": c.name,
+                "country": c.country,
+                "industry": c.industry,
+                "display": f"{c.name}" + (f" ({c.country})" if c.country else ""),
+            }
+            for c in companies
+        ]
+    }
+
+
 @router.get("")
 async def list_companies(
     page: int = Query(1, ge=1),

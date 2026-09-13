@@ -3,6 +3,8 @@ import { api } from '../../lib/apiClient';
 import { useAuthStore } from '../../store/authStore';
 import { LoadingSpinner } from '../../components/feedback/LoadingSpinner';
 import { Modal } from '../../components/ui/Modal';
+import { AsyncCompanySelector, CompanySelectorItem } from '../../components/selectors/AsyncCompanySelector';
+import { AsyncContactSelector, ContactSelectorItem } from '../../components/selectors/AsyncContactSelector';
 import {
   Building2,
   ArrowDown,
@@ -55,54 +57,28 @@ export const FollowUpsPage: React.FC = () => {
   const { user } = useAuthStore();
   const { isRTL } = useTranslation();
 
-  const [companies, setCompanies] = useState<any[]>([]);
+  // Selected company (via async selector)
   const [selectedCompanyId, setSelectedCompanyId] = useState<string>('');
-  const [selectedCompany, setSelectedCompany] = useState<any | null>(null);
+  const [selectedCompany, setSelectedCompany] = useState<CompanySelectorItem | null>(null);
   const [companyContacts, setCompanyContacts] = useState<any[]>([]);
   const [steps, setSteps] = useState<RoadmapStep[]>([]);
-  const [isLoadingCompanies, setIsLoadingCompanies] = useState(true);
   const [isLoadingSteps, setIsLoadingSteps] = useState(false);
-  const [companySearch, setCompanySearch] = useState('');
 
   // Add Step Modal State
   const [isAddStepModalOpen, setIsAddStepModalOpen] = useState(false);
   const [editingStep, setEditingStep] = useState<RoadmapStep | null>(null);
   const [stepTitle, setStepTitle] = useState('First Call');
   const [stepDate, setStepDate] = useState(() => new Date().toISOString().split('T')[0]);
+  // Step contact selector state
+  const [stepContactItem, setStepContactItem] = useState<ContactSelectorItem | null>(null);
   const [stepContactId, setStepContactId] = useState('');
   const [stepStatus, setStepStatus] = useState('COMPLETED');
   const [stepNotes, setStepNotes] = useState('');
   const [isSubmittingStep, setIsSubmittingStep] = useState(false);
 
-  // Fetch Companies List
-  useEffect(() => {
-    const fetchCompanies = async () => {
-      setIsLoadingCompanies(true);
-      try {
-        const res = await api.get<any>('/companies', { per_page: 100 });
-        const list = res.data || [];
-        setCompanies(list);
-        if (list.length > 0) {
-          // Default to ELM or first company
-          const elmCompany = list.find((c: any) => c.name.toUpperCase().includes('ELM')) || list[0];
-          setSelectedCompanyId(elmCompany.id);
-          setSelectedCompany(elmCompany);
-        }
-      } catch (e) {
-        console.error('Failed to load companies', e);
-      } finally {
-        setIsLoadingCompanies(false);
-      }
-    };
-    fetchCompanies();
-  }, []);
-
   // Fetch Steps and Contacts when selected company changes
   useEffect(() => {
     if (!selectedCompanyId) return;
-
-    const comp = companies.find((c) => c.id === selectedCompanyId);
-    setSelectedCompany(comp || null);
 
     const fetchJourney = async () => {
       setIsLoadingSteps(true);
@@ -121,13 +97,15 @@ export const FollowUpsPage: React.FC = () => {
     };
 
     fetchJourney();
-  }, [selectedCompanyId, companies]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedCompanyId]);
 
   const handleOpenAddStep = () => {
     setEditingStep(null);
     setStepTitle('First Call');
     setStepDate(new Date().toISOString().split('T')[0]);
-    setStepContactId(companyContacts[0]?.id || '');
+    setStepContactId('');
+    setStepContactItem(null);
     setStepStatus('COMPLETED');
     setStepNotes('');
     setIsAddStepModalOpen(true);
@@ -138,6 +116,21 @@ export const FollowUpsPage: React.FC = () => {
     setStepTitle(step.step_type);
     setStepDate(step.step_date.split('T')[0]);
     setStepContactId(step.contact_id || '');
+    // Reconstruct contact item for display if we have the info
+    const existingContact = companyContacts.find((c: any) => c.id === step.contact_id);
+    if (existingContact) {
+      setStepContactItem({
+        id: existingContact.id,
+        full_name: existingContact.full_name || `${existingContact.first_name || ''} ${existingContact.last_name || ''}`.trim(),
+        phone: existingContact.phone,
+        email: existingContact.email,
+        company_id: existingContact.company_id,
+        company_name: existingContact.company_name,
+        display: existingContact.full_name || '',
+      });
+    } else {
+      setStepContactItem(null);
+    }
     setStepStatus(step.status || 'COMPLETED');
     setStepNotes(step.notes || '');
     setIsAddStepModalOpen(true);
@@ -203,9 +196,8 @@ export const FollowUpsPage: React.FC = () => {
     return <Sparkles size={16} style={{ color: 'var(--color-accent)' }} />;
   };
 
-  const filteredCompanies = companies.filter((c) =>
-    c.name.toLowerCase().includes(companySearch.toLowerCase())
-  );
+  // Company banner info for display (use selectedCompany directly)
+  const selectedCompanyInfo = selectedCompany as any;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)' }}>
@@ -237,26 +229,28 @@ export const FollowUpsPage: React.FC = () => {
           </p>
         </div>
 
-        {/* Company Quick Selector */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
-          <Building2 size={16} style={{ color: 'var(--color-primary)' }} />
-          <select
-            className="form-select text-xs"
-            style={{ width: '220px', fontWeight: 600 }}
-            value={selectedCompanyId}
-            onChange={(e) => setSelectedCompanyId(e.target.value)}
-          >
-            {companies.map((c) => (
-              <option key={c.id} value={c.id}>
-                🏢 {c.name} ({c.country || 'Gulf'})
-              </option>
-            ))}
-          </select>
+        {/* Company Quick Selector — async search across all 1,938+ companies */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', minWidth: '320px' }}>
+          <Building2 size={16} style={{ color: 'var(--color-primary)', flexShrink: 0 }} />
+          <div style={{ flex: 1 }}>
+            <AsyncCompanySelector
+              value={selectedCompanyId}
+              onChange={(item) => {
+                if (!item) return;
+                setSelectedCompany(item);
+                setSelectedCompanyId(item.id);
+                // Reset step contact when company changes
+                setStepContactId('');
+                setStepContactItem(null);
+              }}
+              placeholder="Search by company name or country..."
+              label="Select Company"
+            />
+          </div>
         </div>
       </div>
 
-      {/* ── Company Banner Card ─────────────────────────────────────────── */}
-      {selectedCompany && (
+      {selectedCompanyInfo && (
         <div
           style={{
             padding: 'var(--space-5) var(--space-6)',
@@ -273,22 +267,24 @@ export const FollowUpsPage: React.FC = () => {
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 800, color: 'var(--neutral-900)' }}>
-                {selectedCompany.name}
+                {selectedCompanyInfo.name}
               </h2>
               <span className="badge badge-accent text-xs">
-                {companyContacts.length} {isRTL ? "جهات اتصال" : "Contacts"}
+                {companyContacts.length} {isRTL ? 'جهات اتصال' : 'Contacts'}
               </span>
             </div>
             <div style={{ display: 'flex', gap: 'var(--space-4)', marginTop: '4px', fontSize: '12px', color: 'var(--neutral-500)' }}>
-              <span>📍 {selectedCompany.country || 'Saudi Arabia'}</span>
-              <span>🏢 {selectedCompany.industry || 'Enterprise'}</span>
-              <span>👤 {selectedCompany.account_owner_name ? `Owner: ${selectedCompany.account_owner_name}` : 'Unassigned'}</span>
+              <span>📍 {selectedCompanyInfo.country || 'Saudi Arabia'}</span>
+              <span>🏢 {selectedCompanyInfo.industry || 'Enterprise'}</span>
+              {(selectedCompanyInfo as any).account_owner_name && (
+                <span>👤 Owner: {(selectedCompanyInfo as any).account_owner_name}</span>
+              )}
             </div>
           </div>
 
           <button onClick={handleOpenAddStep} className="btn btn-accent btn-sm">
             <Plus size={15} />
-            <span>{isRTL ? "إضافة خطوة للمسار" : "+ Add Next Step"}</span>
+            <span>{isRTL ? 'إضافة خطوة للمسار' : '+ Add Next Step'}</span>
           </button>
         </div>
       )}
@@ -543,19 +539,18 @@ export const FollowUpsPage: React.FC = () => {
             </div>
 
             <div>
-              <label className="form-label text-xs">{isRTL ? "جهة الاتصال المعنية (اختياري)" : "Associated Contact (Optional)"}</label>
-              <select
-                className="form-select text-xs"
+              <label className="form-label text-xs">{isRTL ? 'جهة الاتصال المعنية (اختياري)' : 'Associated Contact (Optional)'}</label>
+              <AsyncContactSelector
                 value={stepContactId}
-                onChange={(e) => setStepContactId(e.target.value)}
-              >
-                <option value="">{isRTL ? "— عام للشركة (بدون تحديد جهة اتصال) —" : "— General Company Level (No Contact) —"}</option>
-                {companyContacts.map((cc) => (
-                  <option key={cc.id} value={cc.id}>
-                    👤 {cc.full_name} ({cc.position || 'Employee'})
-                  </option>
-                ))}
-              </select>
+                onChange={(item) => {
+                  setStepContactItem(item);
+                  setStepContactId(item?.id || '');
+                }}
+                companyId={selectedCompanyId || undefined}
+                placeholder={isRTL ? 'ابحث عن جهة اتصال...' : 'Search contacts in this company...'}
+                label="Associated Contact"
+                initialItem={stepContactItem}
+              />
             </div>
 
             <div>
