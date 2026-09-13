@@ -212,30 +212,36 @@ class ContactService:
         count_stmt = select(func.count()).select_from(stmt.subquery())
         total = (await self.db.execute(count_stmt)).scalar_one()
 
-        # Sorting — whitelist allowed fields
+        # Sorting — whitelist allowed fields with Contact.id.asc() deterministic tie-breaker
         if sort_by in ["owner_first", "owner", "owner_id"]:
             if sort_dir == "desc":
-                stmt = stmt.order_by(Contact.owner_id.desc().nullslast(), Contact.first_name.asc())
+                stmt = stmt.order_by(Contact.owner_id.desc().nullslast(), Contact.first_name.asc(), Contact.id.asc())
             else:
-                stmt = stmt.order_by(Contact.owner_id.asc().nullslast(), Contact.first_name.asc())
+                stmt = stmt.order_by(Contact.owner_id.asc().nullslast(), Contact.first_name.asc(), Contact.id.asc())
         elif sort_by == "name":
-            stmt = stmt.order_by(Contact.first_name.asc() if sort_dir == "asc" else Contact.first_name.desc())
+            stmt = stmt.order_by(
+                (Contact.first_name.asc() if sort_dir == "asc" else Contact.first_name.desc()),
+                Contact.id.asc(),
+            )
         elif sort_by == "sheet_order":
             # Default sort: preserves original xlsx row order.
             # Contacts with sheet_order=NULL (freshly created without import) go last.
             if sort_dir == "desc":
-                stmt = stmt.order_by(Contact.sheet_order.desc().nullslast())
+                stmt = stmt.order_by(Contact.sheet_order.desc().nullslast(), Contact.id.asc())
             else:
-                stmt = stmt.order_by(Contact.sheet_order.asc().nullslast())
+                stmt = stmt.order_by(Contact.sheet_order.asc().nullslast(), Contact.id.asc())
         else:
             allowed_sort = {"created_at", "updated_at", "first_name", "last_name", "status", "priority", "last_contact_at", "attempt_count"}
             if sort_by not in allowed_sort:
                 sort_by = "sheet_order"  # fall back to sheet order, not created_at
             if sort_by == "sheet_order":
-                stmt = stmt.order_by(Contact.sheet_order.asc().nullslast())
+                stmt = stmt.order_by(Contact.sheet_order.asc().nullslast(), Contact.id.asc())
             else:
                 col = getattr(Contact, sort_by)
-                stmt = stmt.order_by(col.desc() if sort_dir == "desc" else col.asc())
+                stmt = stmt.order_by(
+                    col.desc() if sort_dir == "desc" else col.asc(),
+                    Contact.id.asc(),
+                )
 
         stmt = stmt.offset((page - 1) * per_page).limit(per_page)
 

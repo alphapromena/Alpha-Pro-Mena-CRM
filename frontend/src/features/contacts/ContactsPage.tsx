@@ -328,17 +328,60 @@ const InlineNextAttemptSelector: React.FC<{
   );
 };
 
+interface ContactsSessionState {
+  activeView?: 'LEADS' | 'EMAIL_WHATSAPP' | 'ARCHIVE';
+  search?: string;
+  ownerFilter?: string;
+  outcomeFilter?: string;
+  countryFilter?: string;
+  industryFilter?: string;
+  positionFilter?: string;
+  sortBy?: string;
+  sortDir?: 'asc' | 'desc';
+  loadedPages?: number;
+  scrollY?: number;
+  anchorContactId?: string | null;
+}
+
+const getSessionStateKey = (userId?: string | null) => {
+  return userId ? `crm_contacts_pos_${userId}` : 'crm_contacts_pos_anon';
+};
+
+const readSessionState = (userId?: string | null): ContactsSessionState | null => {
+  if (typeof window === 'undefined' || !window.sessionStorage) return null;
+  try {
+    const raw = sessionStorage.getItem(getSessionStateKey(userId));
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+};
+
+const writeSessionState = (userId: string | null | undefined, state: ContactsSessionState) => {
+  if (typeof window === 'undefined' || !window.sessionStorage) return;
+  try {
+    sessionStorage.setItem(getSessionStateKey(userId), JSON.stringify(state));
+  } catch {
+    // ignore quota/private errors
+  }
+};
+
 export const ContactsPage: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { user } = useAuthStore();
   const { t, isRTL } = useTranslation();
 
+  const savedState = useRef<ContactsSessionState | null>(readSessionState(user?.id));
+  const hasRestoredInitialState = useRef(false);
+  const isRestoringScroll = useRef(false);
+
   // Active Workflow View: LEADS | EMAIL_WHATSAPP | ARCHIVE
   const tabParam = searchParams.get('tab');
   const [activeView, setActiveView] = useState<'LEADS' | 'EMAIL_WHATSAPP' | 'ARCHIVE'>(() => {
     if (tabParam === 'email_whatsapp') return 'EMAIL_WHATSAPP';
     if (tabParam === 'archive') return 'ARCHIVE';
+    if (savedState.current?.activeView) return savedState.current.activeView;
     return 'LEADS';
   });
 
@@ -351,15 +394,15 @@ export const ContactsPage: React.FC = () => {
   const [usersList, setUsersList] = useState<any[]>([]);
 
   // Filters State
-  const [page, setPage] = useState(1);
-  const [search, setSearch] = useState(searchParams.get('search') || '');
-  const [ownerFilter, setOwnerFilter] = useState(searchParams.get('owner_id') || '');
-  const [outcomeFilter, setOutcomeFilter] = useState(searchParams.get('outcome') || '');
-  const [countryFilter, setCountryFilter] = useState('');
-  const [industryFilter, setIndustryFilter] = useState('');
-  const [positionFilter, setPositionFilter] = useState('');
-  const [sortBy, setSortBy] = useState<string>('sheet_order');
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+  const [page, setPage] = useState(() => savedState.current?.loadedPages || 1);
+  const [search, setSearch] = useState(() => searchParams.get('search') ?? savedState.current?.search ?? '');
+  const [ownerFilter, setOwnerFilter] = useState(() => searchParams.get('owner_id') ?? savedState.current?.ownerFilter ?? '');
+  const [outcomeFilter, setOutcomeFilter] = useState(() => searchParams.get('outcome') ?? savedState.current?.outcomeFilter ?? '');
+  const [countryFilter, setCountryFilter] = useState(() => savedState.current?.countryFilter ?? '');
+  const [industryFilter, setIndustryFilter] = useState(() => savedState.current?.industryFilter ?? '');
+  const [positionFilter, setPositionFilter] = useState(() => savedState.current?.positionFilter ?? '');
+  const [sortBy, setSortBy] = useState<string>(() => savedState.current?.sortBy ?? 'sheet_order');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>(() => savedState.current?.sortDir ?? 'asc');
 
   // Column Visibility Customization
   const defaultColumns = {
@@ -470,21 +513,46 @@ export const ContactsPage: React.FC = () => {
   };
 
   // Initial / filter-change load — resets list
-  const loadContacts = async (targetPage: number = 1) => {
+  const loadContacts = async (targetPage: number = 1, isRestore: boolean = false) => {
     setIsLoading(true);
-    currentPageRef.current = 1;
+    const pagesToLoad = isRestore && savedState.current?.loadedPages ? Math.max(1, savedState.current.loadedPages) : 1;
+    const fetchPerPage = Math.min(pagesToLoad * PER_PAGE, 5000);
+    currentPageRef.current = pagesToLoad;
     hasMoreRef.current = false;
     try {
-      const res = await api.get<any>('/contacts', buildParams(targetPage));
+      const params = buildParams(1);
+      params.per_page = fetchPerPage;
+      const res = await api.get<any>('/contacts', params);
       const items = res.data || [];
       const metaTotal = res.meta?.total || 0;
       const metaPages = res.meta?.total_pages || 1;
       setContacts(items);
       setTotal(metaTotal);
       setTotalPages(metaPages);
-      setPage(1);
-      currentPageRef.current = 1;
-      hasMoreRef.current = metaPages > 1;
+      setPage(pagesToLoad);
+      currentPageRef.current = pagesToLoad;
+      hasMoreRef.current = pagesToLoad < metaPages;
+
+      if (isRestore && (savedState.current?.anchorContactId || (savedState.current?.scrollY && savedState.current.scrollY > 0))) {
+        isRestoringScroll.current = true;
+        setTimeout(() => {
+          const anchorId = savedState.current?.anchorContactId;
+          const targetScrollY = savedState.current?.scrollY || 0;
+          let restored = false;
+          if (anchorId) {
+            const row = document.getElementById(`contact-row-${anchorId}`) ||
+                        document.querySelector(`[data-contact-id="${anchorId}"]`);
+            if (row) {
+              row.scrollIntoView({ block: 'center' });
+              restored = true;
+            }
+          }
+          if (!restored && targetScrollY > 0) {
+            window.scrollTo({ top: targetScrollY, behavior: 'instant' });
+          }
+          isRestoringScroll.current = false;
+        }, 120);
+      }
     } catch (err) {
       console.error('Error fetching contacts', err);
     } finally {
@@ -504,6 +572,21 @@ export const ContactsPage: React.FC = () => {
       setContacts((prev) => [...prev, ...items]);
       currentPageRef.current = nextPage;
       hasMoreRef.current = nextPage < metaPages;
+
+      writeSessionState(user?.id, {
+        activeView,
+        search,
+        ownerFilter,
+        outcomeFilter,
+        countryFilter,
+        industryFilter,
+        positionFilter,
+        sortBy,
+        sortDir,
+        loadedPages: nextPage,
+        scrollY: window.scrollY,
+        anchorContactId: savedState.current?.anchorContactId,
+      });
     } catch (err) {
       console.error('Error fetching more contacts', err);
     } finally {
@@ -511,9 +594,31 @@ export const ContactsPage: React.FC = () => {
     }
   };
 
-  // Reset and reload when filters / view change
+  // Reset and reload when filters / view change, or restore on initial load
   useEffect(() => {
-    loadContacts(1);
+    if (!hasRestoredInitialState.current) {
+      hasRestoredInitialState.current = true;
+      const shouldRestore = !!savedState.current;
+      loadContacts(1, shouldRestore);
+      return;
+    }
+
+    loadContacts(1, false);
+
+    writeSessionState(user?.id, {
+      activeView,
+      search,
+      ownerFilter,
+      outcomeFilter,
+      countryFilter,
+      industryFilter,
+      positionFilter,
+      sortBy,
+      sortDir,
+      loadedPages: 1,
+      scrollY: 0,
+      anchorContactId: null,
+    });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeView, ownerFilter, outcomeFilter, countryFilter, industryFilter, positionFilter, sortBy, sortDir]);
 
@@ -533,6 +638,47 @@ export const ContactsPage: React.FC = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isFetchingMore, contacts.length]);
 
+  // Track scroll and visible anchor contact in viewport (debounced)
+  useEffect(() => {
+    let timeoutId: any = null;
+    const handleScroll = () => {
+      if (isRestoringScroll.current || isLoading) return;
+      clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => {
+        const scrollY = window.scrollY;
+        const rows = document.querySelectorAll('tr[data-contact-id]');
+        let anchorId: string | null = null;
+        for (let i = 0; i < rows.length; i++) {
+          const rect = rows[i].getBoundingClientRect();
+          if (rect.bottom >= 120 && rect.top <= window.innerHeight) {
+            anchorId = rows[i].getAttribute('data-contact-id');
+            break;
+          }
+        }
+        writeSessionState(user?.id, {
+          activeView,
+          search,
+          ownerFilter,
+          outcomeFilter,
+          countryFilter,
+          industryFilter,
+          positionFilter,
+          sortBy,
+          sortDir,
+          loadedPages: currentPageRef.current,
+          scrollY,
+          anchorContactId: anchorId,
+        });
+      }, 150);
+    };
+
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => {
+      window.removeEventListener('scroll', handleScroll);
+      clearTimeout(timeoutId);
+    };
+  }, [user?.id, activeView, search, ownerFilter, outcomeFilter, countryFilter, industryFilter, positionFilter, sortBy, sortDir, isLoading]);
+
   const handleTabChange = (view: 'LEADS' | 'EMAIL_WHATSAPP' | 'ARCHIVE') => {
     setActiveView(view);
     const tabName = view === 'EMAIL_WHATSAPP' ? 'email_whatsapp' : view === 'ARCHIVE' ? 'archive' : 'leads';
@@ -542,7 +688,39 @@ export const ContactsPage: React.FC = () => {
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    loadContacts(1);
+    loadContacts(1, false);
+    writeSessionState(user?.id, {
+      activeView,
+      search,
+      ownerFilter,
+      outcomeFilter,
+      countryFilter,
+      industryFilter,
+      positionFilter,
+      sortBy,
+      sortDir,
+      loadedPages: 1,
+      scrollY: 0,
+      anchorContactId: null,
+    });
+  };
+
+  const handleNavigateToContact = (contactId: string) => {
+    writeSessionState(user?.id, {
+      activeView,
+      search,
+      ownerFilter,
+      outcomeFilter,
+      countryFilter,
+      industryFilter,
+      positionFilter,
+      sortBy,
+      sortDir,
+      loadedPages: currentPageRef.current,
+      scrollY: window.scrollY,
+      anchorContactId: contactId,
+    });
+    navigate(`/contacts/${contactId}`);
   };
 
   const updateContactInList = (updated: Contact) => {
@@ -932,17 +1110,39 @@ export const ContactsPage: React.FC = () => {
           >
             <thead>
               <tr>
+                {/* 0. Sticky Sequential Number (#) */}
+                <th
+                  className="sticky-left-num"
+                  style={{
+                    position: 'sticky',
+                    left: isRTL ? 'auto' : 0,
+                    right: isRTL ? 0 : 'auto',
+                    width: '48px',
+                    minWidth: '48px',
+                    maxWidth: '48px',
+                    textAlign: 'center',
+                    backgroundColor: 'var(--bg-surface-elevated)',
+                    zIndex: 20,
+                    borderRight: isRTL ? 'none' : '1px solid var(--border-color)',
+                    borderLeft: isRTL ? '1px solid var(--border-color)' : 'none',
+                    color: 'var(--neutral-500)',
+                    fontSize: '11px',
+                    fontWeight: 700,
+                  }}
+                >
+                  #
+                </th>
+
                 {/* 1. Sticky Contact Name */}
                 <th
                   className="sticky-left"
                   style={{
                     position: 'sticky',
-                    left: isRTL ? 'auto' : 0,
-                    right: isRTL ? 0 : 'auto',
+                    left: isRTL ? 'auto' : '48px',
+                    right: isRTL ? '48px' : 'auto',
                     minWidth: '190px',
                     backgroundColor: 'var(--bg-surface-elevated)',
                     zIndex: 20,
-                    boxShadow: isRTL ? '-2px 0 5px rgba(0,0,0,0.08)' : '2px 0 5px rgba(0,0,0,0.08)',
                   }}
                 >
                   {isRTL ? "الاسم" : "Contact Name"}
@@ -953,8 +1153,8 @@ export const ContactsPage: React.FC = () => {
                   className="sticky-left-2"
                   style={{
                     position: 'sticky',
-                    left: isRTL ? 'auto' : '190px',
-                    right: isRTL ? '190px' : 'auto',
+                    left: isRTL ? 'auto' : '238px',
+                    right: isRTL ? '238px' : 'auto',
                     minWidth: '180px',
                     backgroundColor: 'var(--bg-surface-elevated)',
                     zIndex: 20,
@@ -1022,24 +1222,47 @@ export const ContactsPage: React.FC = () => {
               </tr>
             </thead>
             <tbody>
-              {contacts.map((c) => {
+              {contacts.map((c, index) => {
                 const contactAttempts = c.attempts || [];
                 return (
-                  <tr key={c.id}>
+                  <tr key={c.id} id={`contact-row-${c.id}`} data-contact-id={c.id}>
+                    {/* 0. Sticky Sequential Number (#) */}
+                    <td
+                      className="sticky-left-num"
+                      style={{
+                        position: 'sticky',
+                        left: isRTL ? 'auto' : 0,
+                        right: isRTL ? 0 : 'auto',
+                        width: '48px',
+                        minWidth: '48px',
+                        maxWidth: '48px',
+                        textAlign: 'center',
+                        backgroundColor: 'var(--bg-surface)',
+                        zIndex: 10,
+                        borderRight: isRTL ? 'none' : '1px solid var(--border-color)',
+                        borderLeft: isRTL ? '1px solid var(--border-color)' : 'none',
+                        color: 'var(--neutral-500)',
+                        fontSize: '11px',
+                        fontWeight: 600,
+                        fontVariantNumeric: 'tabular-nums',
+                      }}
+                    >
+                      {index + 1}
+                    </td>
+
                     {/* 1. Sticky Name */}
                     <td
                       className="sticky-left"
                       style={{
                         position: 'sticky',
-                        left: isRTL ? 'auto' : 0,
-                        right: isRTL ? 0 : 'auto',
+                        left: isRTL ? 'auto' : '48px',
+                        right: isRTL ? '48px' : 'auto',
                         backgroundColor: 'var(--bg-surface)',
                         zIndex: 10,
-                        boxShadow: isRTL ? '-2px 0 5px rgba(0,0,0,0.05)' : '2px 0 5px rgba(0,0,0,0.05)',
                       }}
                     >
                       <button
-                        onClick={() => navigate(`/contacts/${c.id}`)}
+                        onClick={() => handleNavigateToContact(c.id)}
                         className="font-semibold text-xs text-left"
                         style={{
                           color: 'var(--neutral-900)',
@@ -1061,8 +1284,8 @@ export const ContactsPage: React.FC = () => {
                       className="sticky-left-2"
                       style={{
                         position: 'sticky',
-                        left: isRTL ? 'auto' : '190px',
-                        right: isRTL ? '190px' : 'auto',
+                        left: isRTL ? 'auto' : '238px',
+                        right: isRTL ? '238px' : 'auto',
                         backgroundColor: 'var(--bg-surface)',
                         zIndex: 10,
                         boxShadow: isRTL ? '-2px 0 5px rgba(0,0,0,0.05)' : '2px 0 5px rgba(0,0,0,0.05)',
@@ -1247,7 +1470,7 @@ export const ContactsPage: React.FC = () => {
                         </button>
                       ) : (
                         <button
-                          onClick={() => navigate(`/contacts/${c.id}`)}
+                          onClick={() => handleNavigateToContact(c.id)}
                           className="btn btn-ghost btn-xs text-muted"
                         >
                           {isRTL ? "التفاصيل" : "Details"}

@@ -338,6 +338,7 @@ async def upsert_contact(
 async def run_import(
     db: AsyncSession,
     all_rows: List[LeadRow],
+    company_names: Optional[List[str]] = None,
     dry_run: bool = False,
 ) -> ImportReport:
     """Orchestrate a full import: dedup → load snapshot → classify → upsert.
@@ -368,8 +369,16 @@ async def run_import(
     )
     next_order = (max_ord.scalar_one() or 0) + 1
 
-    # ── Step 6: Company cache ─────────────────────────────────────────────
+    # ── Step 6: Company cache & reference sync ───────────────────────────
     company_cache: Dict[str, _uuid_mod.UUID] = {}
+
+    if company_names:
+        for cname in company_names:
+            try:
+                await get_or_create_company(db, cname, company_cache)
+            except Exception as exc:
+                logger.warning("import.company_preseed_error", name=cname, error=str(exc))
+        await db.flush()
 
     # ── Step 7: Upsert ────────────────────────────────────────────────────
     for i, (row, existing_id) in enumerate(to_upsert):

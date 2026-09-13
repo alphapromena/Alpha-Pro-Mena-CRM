@@ -90,6 +90,7 @@ async def _run(args: argparse.Namespace) -> None:
         SKIP_SHEETS,
         parse_sheet,
         read_companies_tab,
+        extract_company_names,
     )
     from app.imports.db_writer import run_import
 
@@ -109,7 +110,8 @@ async def _run(args: argparse.Namespace) -> None:
     print(f"Sheets: {wb.sheetnames}\n")
 
     companies_set = read_companies_tab(wb)
-    print(f"Companies reference: {len(companies_set)} names loaded.\n")
+    company_names = extract_company_names(wb)
+    print(f"Companies reference: {len(companies_set)} names loaded, {len(company_names)} distinct enterprise records.\n")
 
     if args.sheet:
         if args.sheet not in wb.sheetnames:
@@ -150,7 +152,7 @@ async def _run(args: argparse.Namespace) -> None:
             await conn.run_sync(Base.metadata.create_all)
 
     async with AsyncSessionLocal() as db:
-        report = await run_import(db, all_rows, dry_run=args.dry_run)
+        report = await run_import(db, all_rows, company_names=company_names, dry_run=args.dry_run)
         if not args.dry_run:
             await db.commit()
 

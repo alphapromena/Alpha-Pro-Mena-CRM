@@ -177,6 +177,30 @@ def read_companies_tab(wb) -> FrozenSet[str]:
     return frozenset(names)
 
 
+def extract_company_names(wb) -> List[str]:
+    """Extract distinct enterprise company names from the Companies sheet.
+
+    Excludes header rows (like 'company name', 'company', 'check', etc.).
+    Preserves original casing, stripped of excess whitespace.
+    """
+    if "Companies" not in wb.sheetnames:
+        return []
+    ws = wb["Companies"]
+    seen: set[str] = set()
+    result: List[str] = []
+    ignored = {"company name", "company", "check", "leads count", "name"}
+    for row in ws.iter_rows(min_row=1, values_only=True):
+        if not row:
+            continue
+        first_val = row[0]
+        if first_val is not None:
+            name = str(first_val).strip()
+            if name and name.lower() not in ignored and name.lower() not in seen:
+                seen.add(name.lower())
+                result.append(name)
+    return result
+
+
 # ── Cell extractor ────────────────────────────────────────────────────────────
 
 def _cell(row_values: tuple, col_idx: Optional[int]) -> str:

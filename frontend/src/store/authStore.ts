@@ -98,6 +98,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     } catch (e) {
       console.error('Logout error', e);
     } finally {
+      if (typeof window !== 'undefined' && window.sessionStorage) {
+        Object.keys(sessionStorage).forEach((key) => {
+          if (key.startsWith('crm_contacts_pos_') || key.startsWith('crm_user_pos_')) {
+            sessionStorage.removeItem(key);
+          }
+        });
+      }
       set({ user: null, isAuthenticated: false });
       window.location.href = '/login';
     }

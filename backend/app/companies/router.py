@@ -156,9 +156,12 @@ async def list_companies(
 
     total = (await db.execute(select(func.count()).select_from(stmt.subquery()))).scalar_one()
 
-    # Alphabetical sorting (A-Z / أ-ي) or timestamp sorting
+    # Alphabetical sorting (A-Z / أ-ي) or timestamp sorting with Company.id.asc() tie-breaker
     col = getattr(Company, sort_by, Company.name)
-    stmt = stmt.order_by(col.desc() if sort_dir == "desc" else col.asc())
+    stmt = stmt.order_by(
+        col.desc() if sort_dir == "desc" else col.asc(),
+        Company.id.asc(),
+    )
     stmt = stmt.offset((page - 1) * per_page).limit(per_page)
     companies = (await db.execute(stmt)).scalars().all()
 

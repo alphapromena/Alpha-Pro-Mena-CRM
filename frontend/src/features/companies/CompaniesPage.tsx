@@ -10,6 +10,7 @@ export const CompaniesPage: React.FC = () => {
   const navigate = useNavigate();
   const [companies, setCompanies] = useState<Company[]>([]);
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [sortBy, setSortBy] = useState('name');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const [countryFilter, setCountryFilter] = useState('');
@@ -22,28 +23,36 @@ export const CompaniesPage: React.FC = () => {
 
   const PER_PAGE = 50;
 
+  // Debounce search input (300ms)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(search);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [search]);
+
   const fetchCompanies = useCallback(async (targetPage: number = 1, append: boolean = false) => {
     if (append) setIsLoadingMore(true);
     else setIsLoading(true);
 
     try {
-      const sortParts = sortBy.split('_');
-      const sortField = sortParts.slice(0, -1).join('_') || sortParts[0];
-      const dir = sortDir;
-
       const res = await api.get<any>('/companies', {
         page: targetPage,
         per_page: PER_PAGE,
-        search: search || undefined,
-        sort_by: sortField,
-        sort_dir: dir,
+        search: debouncedSearch.trim() || undefined,
+        sort_by: sortBy,
+        sort_dir: sortDir,
         country: countryFilter || undefined,
         industry: industryFilter || undefined,
       });
 
-      const newItems = res.data || [];
+      const newItems: Company[] = res.data || [];
       if (append) {
-        setCompanies((prev) => [...prev, ...newItems]);
+        setCompanies((prev) => {
+          const existingIds = new Set(prev.map((c) => c.id));
+          const fresh = newItems.filter((c) => !existingIds.has(c.id));
+          return [...prev, ...fresh];
+        });
       } else {
         setCompanies(newItems);
       }
@@ -56,15 +65,17 @@ export const CompaniesPage: React.FC = () => {
       setIsLoading(false);
       setIsLoadingMore(false);
     }
-  }, [search, sortBy, sortDir, countryFilter, industryFilter]);
+  }, [debouncedSearch, sortBy, sortDir, countryFilter, industryFilter]);
 
+  // Refetch from page 1 when search or any filter changes
   useEffect(() => {
+    setPage(1);
     fetchCompanies(1, false);
-  }, [sortBy, sortDir, countryFilter, industryFilter]);
+  }, [debouncedSearch, sortBy, sortDir, countryFilter, industryFilter, fetchCompanies]);
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    fetchCompanies(1, false);
+    setDebouncedSearch(search);
   };
 
   const handleLoadMore = () => {
@@ -73,21 +84,38 @@ export const CompaniesPage: React.FC = () => {
     }
   };
 
-  const handleLoadAll = () => {
-    api.get<any>('/companies', {
-      page: 1,
-      per_page: 500,
-      search: search || undefined,
-      sort_by: sortBy,
-      sort_dir: sortDir,
-      country: countryFilter || undefined,
-      industry: industryFilter || undefined,
-    }).then((res) => {
-      setCompanies(res.data || []);
-      setTotal(res.meta?.total || 0);
-      setPage(res.meta?.total_pages || 1);
-      setTotalPages(1);
-    });
+  const handleLoadAll = async () => {
+    if (isLoadingMore || page >= totalPages) return;
+    setIsLoadingMore(true);
+    try {
+      let currentPageNum = page + 1;
+      let allNew: Company[] = [];
+      while (currentPageNum <= totalPages) {
+        const res = await api.get<any>('/companies', {
+          page: currentPageNum,
+          per_page: 100,
+          search: debouncedSearch.trim() || undefined,
+          sort_by: sortBy,
+          sort_dir: sortDir,
+          country: countryFilter || undefined,
+          industry: industryFilter || undefined,
+        });
+        const items = res.data || [];
+        allNew = [...allNew, ...items];
+        if (items.length === 0 || currentPageNum >= (res.meta?.total_pages || 1)) break;
+        currentPageNum++;
+      }
+      setCompanies((prev) => {
+        const existingIds = new Set(prev.map((c) => c.id));
+        const fresh = allNew.filter((c) => !existingIds.has(c.id));
+        return [...prev, ...fresh];
+      });
+      setPage(totalPages);
+    } catch (e) {
+      console.error('Failed to load all companies', e);
+    } finally {
+      setIsLoadingMore(false);
+    }
   };
 
   return (
