@@ -7,6 +7,7 @@ import { Badge } from '../../components/ui/Badge';
 import { Modal } from '../../components/ui/Modal';
 import { LoadingSpinner } from '../../components/feedback/LoadingSpinner';
 import { EmptyState } from '../../components/feedback/EmptyState';
+import { AsyncContactSelector, ContactSelectorItem } from '../../components/selectors/AsyncContactSelector';
 import {
   Presentation,
   CheckCircle2,
@@ -70,13 +71,16 @@ export const DemosPage: React.FC = () => {
     REPORT_COMPLETE: 0,
     HISTORICAL: 0,
   });
+  // Users list for owner selector — loaded from /users/eligible-demo-owners
+  // (accessible to all authenticated users, not just managers)
   const [usersList, setUsersList] = useState<any[]>([]);
-  const [contactsList, setContactsList] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   // New Demo Modal
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [isHistoricalCreate, setIsHistoricalCreate] = useState(false);
+  // Selected contact item (carries id + display info for AsyncContactSelector)
+  const [createSelectedContact, setCreateSelectedContact] = useState<ContactSelectorItem | null>(null);
   const [createForm, setCreateForm] = useState({
     contact_id: '',
     company_name: '',
@@ -133,21 +137,17 @@ export const DemosPage: React.FC = () => {
     setSearchParams(params, { replace: true });
   };
 
-  // Load initial dropdowns
+  // Load eligible demo owners — accessible to all authenticated users
   useEffect(() => {
-    const loadDropdowns = async () => {
+    const loadOwners = async () => {
       try {
-        const [uRes, cRes] = await Promise.all([
-          api.get<any>('/users'),
-          api.get<any>('/contacts?per_page=100'),
-        ]);
-        setUsersList(uRes.data || []);
-        setContactsList(cRes.data || []);
+        const res = await api.get<any>('/users/eligible-demo-owners');
+        setUsersList(res.data || []);
       } catch (e) {
-        console.error('Failed to load metadata', e);
+        console.error('Failed to load eligible demo owners', e);
       }
     };
-    loadDropdowns();
+    loadOwners();
   }, []);
 
   // Fetch demo counts
@@ -276,8 +276,9 @@ export const DemosPage: React.FC = () => {
 
   const handleOpenCreateModal = (isHist: boolean = false) => {
     setIsHistoricalCreate(isHist);
+    setCreateSelectedContact(null);
     setCreateForm({
-      contact_id: contactsList[0]?.id || '',
+      contact_id: '',
       company_name: '',
       owner_id: user?.id || '',
       scheduled_at: '',
@@ -1080,22 +1081,27 @@ amin@alphapromena.com,2025-10-20,Amin,"Overview of lead distribution module",POS
             </div>
           )}
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-3)' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-3)' }}>
             <div className="form-group">
-              <label className="form-label font-semibold text-xs">Target Contact *</label>
-              <select
-                required
-                className="form-select"
+              <label className="form-label font-semibold text-xs">
+                Target Contact *
+                <span
+                  style={{ fontSize: '10px', fontWeight: 400, color: 'var(--neutral-400)', marginLeft: '6px' }}
+                >
+                  Search by name, phone, company
+                </span>
+              </label>
+              <AsyncContactSelector
                 value={createForm.contact_id}
-                onChange={(e) => setCreateForm({ ...createForm, contact_id: e.target.value })}
-              >
-                <option value="">Select Contact</option>
-                {contactsList.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.full_name} ({c.company_name || 'No Company'})
-                  </option>
-                ))}
-              </select>
+                onChange={(item) => {
+                  setCreateSelectedContact(item);
+                  setCreateForm({ ...createForm, contact_id: item?.id || '' });
+                }}
+                placeholder="Search contacts..."
+                required
+                label="Target Contact"
+                initialItem={createSelectedContact}
+              />
             </div>
 
             <div className="form-group">
@@ -1105,12 +1111,20 @@ amin@alphapromena.com,2025-10-20,Amin,"Overview of lead distribution module",POS
                 value={createForm.owner_id}
                 onChange={(e) => setCreateForm({ ...createForm, owner_id: e.target.value })}
               >
+                {usersList.length === 0 && (
+                  <option value={user?.id || ''}>{user?.full_name || 'Current User'}</option>
+                )}
                 {usersList.map((u) => (
                   <option key={u.id} value={u.id}>
                     {u.full_name} ({u.role})
                   </option>
                 ))}
               </select>
+              {usersList.length === 0 && (
+                <p style={{ fontSize: '10px', color: 'var(--neutral-400)', margin: '2px 0 0' }}>
+                  Loading owners…
+                </p>
+              )}
             </div>
           </div>
 

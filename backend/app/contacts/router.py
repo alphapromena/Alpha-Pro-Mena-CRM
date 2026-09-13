@@ -197,6 +197,81 @@ def _contact_to_dict(c: Contact) -> Dict[str, Any]:
     }
 
 
+@router.get("/selector")
+async def contacts_selector(
+    search: Optional[str] = Query(None, max_length=200),
+    company_id: Optional[str] = Query(None),
+    per_page: int = Query(20, ge=1, le=100),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Lightweight contact selector for async search dropdowns (Demo, Follow-up forms).
+    Returns id, full_name, phone, email, company_name, company_id.
+    RBAC: non-managers see only their own contacts; managers see all.
+    Excludes ARCHIVED and PENDING_CLAIM contacts.
+    Prevents stale responses by requiring an explicit search or company_id.
+    """
+    from sqlalchemy import or_, select as sa_select
+    from sqlalchemy.orm import selectinload as sel
+    from app.models.company import Company as CompanyModel
+    from app.models.contact import ContactStatus as CS
+
+    stmt = (
+        sa_select(Contact)
+        .where(
+            Contact.deleted_at.is_(None),
+            Contact.status.not_in([CS.ARCHIVED, CS.PENDING_CLAIM]),
+        )
+        .options(sel(Contact.company))
+    )
+
+    # RBAC scoping
+    if not current_user.is_manager_or_above and not current_user.is_data_ops:
+        stmt = stmt.where(Contact.owner_id == current_user.id)
+
+    # Company filter
+    if company_id:
+        import uuid as _uuid
+        stmt = stmt.where(Contact.company_id == _uuid.UUID(company_id))
+
+    # Search filter
+    if search and search.strip():
+        q = f"%{search.strip()}%"
+        stmt = (
+            stmt
+            .outerjoin(CompanyModel, Contact.company_id == CompanyModel.id)
+            .where(
+                or_(
+                    Contact.first_name.ilike(q),
+                    Contact.last_name.ilike(q),
+                    Contact.phone.ilike(q),
+                    Contact.email.ilike(q),
+                    CompanyModel.name.ilike(q),
+                )
+            )
+        )
+
+    stmt = stmt.order_by(Contact.first_name.asc()).limit(per_page)
+    contacts = (await db.execute(stmt)).scalars().all()
+
+    return {
+        "data": [
+            {
+                "id": str(c.id),
+                "full_name": f"{c.first_name or ''} {c.last_name or ''}".strip(),
+                "phone": c.phone,
+                "email": c.email,
+                "company_id": str(c.company_id) if c.company_id else None,
+                "company_name": c.company.name if c.company else None,
+                "display": f"{c.company.name + ' — ' if c.company else ''}{c.first_name or ''} {c.last_name or ''}".strip()
+                           + (f" · {c.phone}" if c.phone else ""),
+            }
+            for c in contacts
+        ]
+    }
+
+
 @router.get("")
 async def list_contacts(
     page: int = Query(1, ge=1),

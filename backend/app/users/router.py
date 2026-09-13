@@ -5,7 +5,9 @@ import uuid
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.auth.dependencies import get_current_user, require_team_lead, require_manager_or_above
 from app.database import get_db
@@ -31,6 +33,58 @@ def _user_to_response(user: User) -> dict:
         "lead_capacity": user.lead_capacity,
         "last_login_at": user.last_login_at.isoformat() if user.last_login_at else None,
         "created_at": user.created_at.isoformat(),
+    }
+
+
+@router.get("/me", response_model=UserResponse)
+async def get_current_user_profile(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return the currently authenticated user's profile."""
+    stmt = select(User).where(User.id == current_user.id).options(selectinload(User.team))
+    user = (await db.execute(stmt)).scalar_one()
+    return _user_to_response(user)
+
+
+@router.get("/eligible-demo-owners")
+async def list_eligible_demo_owners(
+    search: Optional[str] = Query(None),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Return all active users who are eligible to own a demo.
+    Accessible to every authenticated user (not manager-restricted) so that
+    non-manager users can populate the Demo Owner selector without a 403.
+    """
+    from sqlalchemy import or_
+    stmt = (
+        select(User)
+        .where(User.is_active == True, User.deleted_at.is_(None))  # noqa: E712
+        .options(selectinload(User.team))
+    )
+    if search and search.strip():
+        q = f"%{search.strip()}%"
+        stmt = stmt.where(
+            or_(
+                User.first_name.ilike(q),
+                User.last_name.ilike(q),
+                User.email.ilike(q),
+            )
+        )
+    stmt = stmt.order_by(User.first_name.asc())
+    users = (await db.execute(stmt)).scalars().all()
+    return {
+        "data": [
+            {
+                "id": str(u.id),
+                "full_name": u.full_name,
+                "email": u.email,
+                "role": u.role,
+            }
+            for u in users
+        ]
     }
 
 
