@@ -250,6 +250,8 @@ async def _migrate_postgresql(session: AsyncSession) -> None:
             ALTER TABLE demos ADD COLUMN IF NOT EXISTS is_historical    BOOLEAN      NOT NULL DEFAULT FALSE;
             ALTER TABLE demos ADD COLUMN IF NOT EXISTS historical_source VARCHAR(255);
             ALTER TABLE demos ADD COLUMN IF NOT EXISTS historical_date  TIMESTAMPTZ;
+            ALTER TABLE demos ADD COLUMN IF NOT EXISTS source_sheet      VARCHAR(50);
+            ALTER TABLE demos ADD COLUMN IF NOT EXISTS source_row        INTEGER;
             ALTER TABLE demos ADD COLUMN IF NOT EXISTS created_by_id    UUID REFERENCES users(id) ON DELETE SET NULL;
             ALTER TABLE demos ADD COLUMN IF NOT EXISTS updated_by_id    UUID REFERENCES users(id) ON DELETE SET NULL;
             CREATE INDEX IF NOT EXISTS ix_demos_status          ON demos (status);
@@ -258,6 +260,36 @@ async def _migrate_postgresql(session: AsyncSession) -> None:
             CREATE INDEX IF NOT EXISTS ix_demos_created_by_id   ON demos (created_by_id);
             CREATE INDEX IF NOT EXISTS idx_demos_owner_status   ON demos (owner_id, status);
         END IF;
+
+        -- 3. follow_ups table
+        IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'follow_ups') THEN
+            ALTER TABLE follow_ups ADD COLUMN IF NOT EXISTS company_id   UUID REFERENCES companies(id) ON DELETE SET NULL;
+            ALTER TABLE follow_ups ADD COLUMN IF NOT EXISTS next_step    TEXT;
+            ALTER TABLE follow_ups ADD COLUMN IF NOT EXISTS source_sheet VARCHAR(50);
+            ALTER TABLE follow_ups ADD COLUMN IF NOT EXISTS source_row   INTEGER;
+            CREATE INDEX IF NOT EXISTS ix_follow_ups_company_id ON follow_ups (company_id);
+        END IF;
+
+        -- 4. leads_archive table
+        CREATE TABLE IF NOT EXISTS leads_archive (
+            id UUID PRIMARY KEY,
+            batch_id VARCHAR(100) NOT NULL,
+            sheet_name VARCHAR(100) NOT NULL DEFAULT 'Leads',
+            row_number INTEGER NOT NULL,
+            raw_data TEXT NOT NULL,
+            name VARCHAR(255),
+            company_name VARCHAR(255),
+            position VARCHAR(255),
+            phone VARCHAR(100),
+            email VARCHAR(255),
+            salesperson VARCHAR(100),
+            row_checksum VARCHAR(64),
+            archived_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_leads_archive_batch ON leads_archive (batch_id);
+        CREATE INDEX IF NOT EXISTS idx_leads_archive_phone ON leads_archive (phone);
+        CREATE INDEX IF NOT EXISTS idx_leads_archive_email ON leads_archive (email);
+        CREATE INDEX IF NOT EXISTS idx_leads_archive_salesperson ON leads_archive (salesperson);
     END $$;
     """))
 
@@ -371,6 +403,45 @@ async def _migrate_sqlite(session: AsyncSession) -> None:
             await session.execute(
                 text(f"ALTER TABLE users ADD COLUMN {col} {definition}")
             )
+
+    # Demos columns
+    res_demos = await session.execute(text("PRAGMA table_info(demos)"))
+    demo_cols = {row[1] for row in res_demos.fetchall()}
+    if "source_sheet" not in demo_cols:
+        await session.execute(text("ALTER TABLE demos ADD COLUMN source_sheet VARCHAR(50)"))
+    if "source_row" not in demo_cols:
+        await session.execute(text("ALTER TABLE demos ADD COLUMN source_row INTEGER"))
+
+    # Follow-ups columns
+    res_fu = await session.execute(text("PRAGMA table_info(follow_ups)"))
+    fu_cols = {row[1] for row in res_fu.fetchall()}
+    if "company_id" not in fu_cols:
+        await session.execute(text("ALTER TABLE follow_ups ADD COLUMN company_id CHAR(32)"))
+    if "next_step" not in fu_cols:
+        await session.execute(text("ALTER TABLE follow_ups ADD COLUMN next_step TEXT"))
+    if "source_sheet" not in fu_cols:
+        await session.execute(text("ALTER TABLE follow_ups ADD COLUMN source_sheet VARCHAR(50)"))
+    if "source_row" not in fu_cols:
+        await session.execute(text("ALTER TABLE follow_ups ADD COLUMN source_row INTEGER"))
+
+    # Leads archive table
+    await session.execute(text("""
+    CREATE TABLE IF NOT EXISTS leads_archive (
+        id CHAR(32) PRIMARY KEY,
+        batch_id VARCHAR(100) NOT NULL,
+        sheet_name VARCHAR(100) NOT NULL DEFAULT 'Leads',
+        row_number INTEGER NOT NULL,
+        raw_data TEXT NOT NULL,
+        name VARCHAR(255),
+        company_name VARCHAR(255),
+        position VARCHAR(255),
+        phone VARCHAR(100),
+        email VARCHAR(255),
+        salesperson VARCHAR(100),
+        row_checksum VARCHAR(64),
+        archived_at DATETIME NOT NULL
+    )
+    """))
 
     # Same backfill as the PostgreSQL path. An empty `cols` means there is no users
     # table yet, in which case the ALTERs above would have failed and there is

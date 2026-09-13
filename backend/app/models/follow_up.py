@@ -6,7 +6,7 @@ from datetime import datetime
 from enum import Enum as PyEnum
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import DateTime, ForeignKey, String, Text
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy import Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -15,6 +15,7 @@ from app.models.base import TimestampMixin, UUIDMixin
 
 if TYPE_CHECKING:
     from app.models.contact import Contact
+    from app.models.company import Company
     from app.models.user import User
     from app.models.task import Task
 
@@ -35,6 +36,9 @@ class FollowUp(UUIDMixin, TimestampMixin, Base):
     contact_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("contacts.id", ondelete="CASCADE"), nullable=False, index=True
     )
+    company_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("companies.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
     )
@@ -46,8 +50,14 @@ class FollowUp(UUIDMixin, TimestampMixin, Base):
     due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    next_step: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Source workbook auditability
+    source_sheet: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    source_row: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
     # Relationships
     contact: Mapped["Contact"] = relationship("Contact", back_populates="follow_ups")
+    company: Mapped[Optional["Company"]] = relationship("Company")
     user: Mapped[Optional["User"]] = relationship("User", foreign_keys=[user_id])
     task: Mapped[Optional["Task"]] = relationship("Task", foreign_keys=[task_id])
