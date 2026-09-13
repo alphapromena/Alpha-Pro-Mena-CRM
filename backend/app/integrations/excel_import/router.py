@@ -89,10 +89,12 @@ async def import_excel(
         SKIP_SHEETS,
         parse_sheet,
         read_companies_tab,
+        extract_company_names,
     )
     from app.imports.db_writer import run_import
 
     companies_set = read_companies_tab(wb)
+    company_names = extract_company_names(wb)
 
     if sheet_name:
         if sheet_name not in wb.sheetnames:
@@ -128,7 +130,7 @@ async def import_excel(
         }
 
     # ── Run import ────────────────────────────────────────────────────────
-    report = await run_import(db, all_rows, dry_run=dry_run)
+    report = await run_import(db, all_rows, company_names=company_names, dry_run=dry_run)
 
     logger.info(
         "excel_import.completed",
