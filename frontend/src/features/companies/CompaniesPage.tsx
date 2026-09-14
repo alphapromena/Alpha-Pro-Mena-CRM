@@ -20,6 +20,12 @@ export const CompaniesPage: React.FC = () => {
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
+  // Paging is driven by how many records are on screen, never by a page number,
+  // because Load More and Load All used different page sizes and a page number
+  // means nothing unless you also know which size produced it.
+  const [loadedCount, setLoadedCount] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const PER_PAGE = 50;
 
@@ -47,20 +53,32 @@ export const CompaniesPage: React.FC = () => {
       });
 
       const newItems: Company[] = res.data || [];
+      const metaTotal = res.meta?.total || 0;
+      let nextLoaded = newItems.length;
       if (append) {
         setCompanies((prev) => {
           const existingIds = new Set(prev.map((c) => c.id));
           const fresh = newItems.filter((c) => !existingIds.has(c.id));
+          nextLoaded = prev.length + fresh.length;
+          setLoadedCount(nextLoaded);
           return [...prev, ...fresh];
         });
       } else {
         setCompanies(newItems);
+        setLoadedCount(newItems.length);
       }
-      setTotal(res.meta?.total || 0);
-      setTotalPages(res.meta?.total_pages || 1);
+      setTotal(metaTotal);
+      setTotalPages(Math.max(1, Math.ceil(metaTotal / PER_PAGE)));
       setPage(targetPage);
-    } catch (e) {
+      setHasMore(
+        typeof res.meta?.has_more === 'boolean'
+          ? res.meta.has_more
+          : nextLoaded < metaTotal
+      );
+      setLoadError(null);
+    } catch (e: any) {
       console.error('Failed to load companies', e);
+      setLoadError(e?.message || 'Could not load companies. Please try again.');
     } finally {
       setIsLoading(false);
       setIsLoadingMore(false);
@@ -79,40 +97,61 @@ export const CompaniesPage: React.FC = () => {
   };
 
   const handleLoadMore = () => {
-    if (page < totalPages && !isLoadingMore) {
-      fetchCompanies(page + 1, true);
+    // The next slice follows what is already on screen. Deriving the page number
+    // from loadedCount keeps Load More and Load All on the same page size.
+    if (hasMore && !isLoadingMore) {
+      fetchCompanies(Math.floor(loadedCount / PER_PAGE) + 1, true);
     }
   };
 
   const handleLoadAll = async () => {
-    if (isLoadingMore || page >= totalPages) return;
+    if (isLoadingMore || !hasMore) return;
     setIsLoadingMore(true);
+    setLoadError(null);
     try {
-      let currentPageNum = page + 1;
-      let allNew: Company[] = [];
-      while (currentPageNum <= totalPages) {
+      // Previously this started at page + 1, where page counted PER_PAGE (50)
+      // records, but requested per_page 100. With one page loaded it asked for
+      // records 101-200 and silently skipped 51-100. Everything now walks in
+      // PER_PAGE steps from the number of records actually held.
+      let loaded = loadedCount;
+      let more = true;
+      const collected: Company[] = [];
+      let guard = 0;
+
+      while (more && guard < 500) {
+        guard += 1;
         const res = await api.get<any>('/companies', {
-          page: currentPageNum,
-          per_page: 100,
+          page: Math.floor(loaded / PER_PAGE) + 1,
+          per_page: PER_PAGE,
           search: debouncedSearch.trim() || undefined,
           sort_by: sortBy,
           sort_dir: sortDir,
           country: countryFilter || undefined,
           industry: industryFilter || undefined,
         });
-        const items = res.data || [];
-        allNew = [...allNew, ...items];
-        if (items.length === 0 || currentPageNum >= (res.meta?.total_pages || 1)) break;
-        currentPageNum++;
+        const items: Company[] = res.data || [];
+        if (items.length === 0) break;
+        collected.push(...items);
+        loaded += items.length;
+        more =
+          typeof res.meta?.has_more === 'boolean'
+            ? res.meta.has_more
+            : loaded < (res.meta?.total || 0);
+        setLoadedCount(loaded);
       }
+
       setCompanies((prev) => {
         const existingIds = new Set(prev.map((c) => c.id));
-        const fresh = allNew.filter((c) => !existingIds.has(c.id));
-        return [...prev, ...fresh];
+        const fresh = collected.filter((c) => !existingIds.has(c.id));
+        const merged = [...prev, ...fresh];
+        setLoadedCount(merged.length);
+        return merged;
       });
-      setPage(totalPages);
-    } catch (e) {
+      setHasMore(more);
+      setPage(Math.max(1, Math.ceil(loaded / PER_PAGE)));
+    } catch (e: any) {
       console.error('Failed to load all companies', e);
+      setLoadError(e?.message || 'Could not load all companies. Some may be missing.');
     } finally {
       setIsLoadingMore(false);
     }
@@ -321,15 +360,34 @@ export const CompaniesPage: React.FC = () => {
             ))}
           </div>
 
+          {/* A failed page must be visible, not silently missing rows. */}
+          {loadError && (
+            <div
+              role="alert"
+              style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                gap: 'var(--space-3)', padding: 'var(--space-3)',
+                border: '1px solid #ef4444', borderRadius: 'var(--radius-md)',
+                backgroundColor: 'rgba(239,68,68,0.08)', color: '#b91c1c',
+                fontSize: '13px', marginTop: 'var(--space-3)',
+              }}
+            >
+              <span>{loadError}</span>
+              <button onClick={handleLoadMore} disabled={isLoadingMore} className="btn btn-secondary btn-sm">
+                Retry
+              </button>
+            </div>
+          )}
+
           {/* Pagination footer */}
-          {companies.length < total && (
+          {hasMore && (
             <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 'var(--space-3)', paddingTop: 'var(--space-4)' }}>
               <span className="text-xs text-muted">
                 Showing {companies.length} of {total} companies
               </span>
               <button
                 onClick={handleLoadMore}
-                disabled={isLoadingMore}
+                disabled={isLoadingMore || !hasMore}
                 className="btn btn-secondary btn-sm"
                 style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
               >
@@ -339,6 +397,7 @@ export const CompaniesPage: React.FC = () => {
               {total > PER_PAGE && (
                 <button
                   onClick={handleLoadAll}
+                  disabled={isLoadingMore || !hasMore}
                   className="btn btn-ghost btn-sm text-xs"
                 >
                   Load All ({total})
@@ -346,7 +405,7 @@ export const CompaniesPage: React.FC = () => {
               )}
             </div>
           )}
-          {companies.length >= total && total > 0 && (
+          {!hasMore && total > 0 && (
             <div style={{ textAlign: 'center' }}>
               <span className="text-xs text-muted">All {total} companies loaded</span>
             </div>
