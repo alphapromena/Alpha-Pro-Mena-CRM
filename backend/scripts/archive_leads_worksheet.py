@@ -38,6 +38,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import openpyxl  # noqa: E402
 
 SHEET = "Leads"
+
+# Widths of the typed convenience columns in leads_archive. raw_data always holds
+# the complete, unmodified row, so trimming these for indexing loses nothing.
+FIELD_WIDTHS = {
+    "name": 255, "company_name": 255, "position": 255,
+    "phone": 100, "email": 255, "salesperson": 100,
+}
 # Header labels seen in the Leads worksheet, mapped to the archive's typed columns.
 FIELD_HINTS = {
     "name": ("name", "full name", "contact", "contact name"),
@@ -75,6 +82,10 @@ def file_sha256(path: Path) -> str:
 def map_headers(header: List[str]) -> Dict[str, int]:
     """Map the archive's typed columns onto whichever position the sheet uses."""
     found: Dict[str, int] = {}
+    # The Leads sheet leaves column A unlabelled, but it holds the contact name.
+    # Without this the name column is silently dropped from every archived row.
+    if header and not norm(header[0]):
+        found["name"] = 0
     for idx, label in enumerate(header):
         low = norm(label).lower()
         if not low:
@@ -114,7 +125,14 @@ def read_leads(path: Path) -> Tuple[List[str], List[Dict[str, Any]]]:
             i = pos.get(field)
             if i is None or i >= len(raw):
                 return None
-            return norm(raw[i]) or None
+            value = norm(raw[i])
+            if not value:
+                return None
+            # Some cells hold prose where a phone or title belongs. Trim to the
+            # column width rather than failing the whole archive; raw_data keeps
+            # the original in full.
+            limit = FIELD_WIDTHS.get(field)
+            return value[:limit] if limit and len(value) > limit else value
 
         out.append({
             "row_number": idx,
