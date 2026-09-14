@@ -331,12 +331,15 @@ async def reconcile(dsn: str, workbook: Path, execute: bool) -> Dict[str, Any]:
             for rec in to_insert:
                 first, last = split_name(rec["name"])
                 await conn.execute(
+                    # priority, is_dnc and attempt_count are NOT NULL with no database
+                    # default, so they must be supplied explicitly on insert.
                     """insert into contacts
                          (id, first_name, last_name, position, email, phone, company_id,
-                          owner_id, status, source, source_sheet, sheet_order, import_key,
+                          owner_id, status, priority, is_dnc, attempt_count,
+                          source, source_sheet, sheet_order, import_key,
                           created_at, updated_at)
                        values (gen_random_uuid(), $1,$2,$3,nullif($4,''),nullif($5,''),$6,$7,
-                               'NEW','Sheet16','Sheet16',$8,$9,$10,$10)""",
+                               'NEW','MEDIUM',false,0,'Sheet16','Sheet16',$8,$9,$10,$10)""",
                     first, last, rec["position"], rec["email"], rec["phone_raw"],
                     companies.get(rec["company_key"]), rec["owner_id"],
                     rec["source_row"], f"{checksum[:12]}:{rec['source_row']}", now,
