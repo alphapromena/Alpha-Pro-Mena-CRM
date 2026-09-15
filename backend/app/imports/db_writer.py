@@ -407,7 +407,7 @@ async def run_import(
     for i, (row, existing_id) in enumerate(to_upsert):
         try:
             owner_id   = _resolve_owner(row.salesperson, sp_map, row)
-            company_id = await get_or_create_company(db, row.company, company_cache, report=report, country=row.country)
+            company_id = await get_or_create_company(db, row.company, company_cache, report=report, country=row.country_hint or None)
 
             async with db.begin_nested():
                 action, next_order = await upsert_contact(

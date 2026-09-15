@@ -567,11 +567,9 @@ async def management_dashboard(
     team_members_map: Dict[str, List[dict]] = {}
 
     for u in users_list:
-        # Operational Performance Evaluation & Oversight section must ONLY ever show the 4 sales reps (Saleh, Hasan, Amin, Ghaida)
-        # Never Qusai (team lead) or Abdallah (manager)
-        if u.role != UserRole.USER and u.first_name not in ["Saleh", "Hasan", "Amin", "Ghaida"]:
-            continue
-        if u.first_name in ["Qusai", "Abdallah"]:
+        # Operational Performance table shows ONLY sales rep (USER-role) accounts.
+        # Team leads, managers, and data-ops users are not evaluated as sales reps.
+        if u.role != UserRole.USER:
             continue
 
         uid_str = str(u.id)
