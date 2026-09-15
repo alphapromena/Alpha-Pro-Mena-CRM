@@ -5,6 +5,7 @@
 import { create } from 'zustand';
 import { User } from '../types';
 import { api } from '../lib/apiClient';
+import { normalizeUserRole } from '../lib/permissions';
 
 interface AuthState {
   user: User | null;
@@ -29,7 +30,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   fetchMe: async () => {
     set({ isLoading: true });
     try {
-      const user = await api.get<User>('/auth/me');
+      const rawUser = await api.get<User>('/auth/me');
+      const user: User = {
+        ...rawUser,
+        role: normalizeUserRole(rawUser.role),
+      };
       const activeTheme = user.theme_preference || get().theme || 'black_beige';
       const activeLang = ((user as any).preferred_language as 'en' | 'ar') || get().language || 'en';
 
@@ -121,11 +126,17 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       document.documentElement.setAttribute('lang', l);
       localStorage.setItem('crm_lang', l);
     }
+    const normalizedUser = user
+      ? {
+          ...user,
+          role: normalizeUserRole(user.role),
+        }
+      : null;
     set({
-      user,
-      theme: user?.theme_preference || get().theme || 'black_beige',
-      language: ((user as any)?.preferred_language as 'en' | 'ar') || get().language || 'en',
-      isAuthenticated: !!user,
+      user: normalizedUser,
+      theme: normalizedUser?.theme_preference || get().theme || 'black_beige',
+      language: ((normalizedUser as any)?.preferred_language as 'en' | 'ar') || get().language || 'en',
+      isAuthenticated: !!normalizedUser,
       // A definitive answer about the session, so bootstrapping is over. Without
       // this, an anonymous start that calls setUser(null) instead of fetchMe would
       // leave isLoading true and the app stuck on the loading screen.

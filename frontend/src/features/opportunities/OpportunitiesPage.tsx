@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../../lib/apiClient';
 import { useAuthStore } from '../../store/authStore';
+import { isManagerOrAbove } from '../../lib/permissions';
 import { Company, OpportunityRoadmapStep, Opportunity } from '../../types';
 import { Badge } from '../../components/ui/Badge';
 import { Modal } from '../../components/ui/Modal';
@@ -97,21 +98,28 @@ export const OpportunitiesPage: React.FC = () => {
   const [editNextStep, setEditNextStep] = useState('');
   const [isUpdatingOpp, setIsUpdatingOpp] = useState(false);
 
+  const hasManagerPrivileges = isManagerOrAbove(user?.role);
+
   // Fetch Users & Companies
   useEffect(() => {
     const initData = async () => {
       setIsLoading(true);
       try {
-        const [cRes, uRes] = await Promise.all([
-          api.get<any>('/companies', { per_page: 100 }),
-          api.get<any>('/users'),
-        ]);
+        const cRes = await api.get<any>('/companies', { per_page: 100 });
         const list = cRes.data || [];
         setCompanies(list);
         if (list.length > 0) {
           setSelectedCompanyId(list[0].id);
         }
-        setUsersList(uRes.data || []);
+
+        if (hasManagerPrivileges) {
+          try {
+            const uRes = await api.get<any>('/users');
+            setUsersList(uRes.data || []);
+          } catch (ue) {
+            console.error('Failed to load users list', ue);
+          }
+        }
       } catch (e) {
         console.error('Failed to load initial data', e);
       } finally {
@@ -119,7 +127,7 @@ export const OpportunitiesPage: React.FC = () => {
       }
     };
     initData();
-  }, []);
+  }, [hasManagerPrivileges]);
 
   // Fetch Opportunities Pipeline
   const fetchOpportunities = async () => {
@@ -309,19 +317,21 @@ export const OpportunitiesPage: React.FC = () => {
           )}
 
           {/* User Filter Dropdown for Managers */}
-          <select
-            className="form-select text-xs"
-            style={{ width: '180px' }}
-            value={userFilter}
-            onChange={(e) => setUserFilter(e.target.value)}
-          >
-            <option value="">{isRTL ? "جميع الموظفين" : "All Sales Reps"}</option>
-            {usersList.map((u) => (
-              <option key={u.id} value={u.id}>
-                👤 {u.full_name} ({u.role})
-              </option>
-            ))}
-          </select>
+          {hasManagerPrivileges && (
+            <select
+              className="form-select text-xs"
+              style={{ width: '180px' }}
+              value={userFilter}
+              onChange={(e) => setUserFilter(e.target.value)}
+            >
+              <option value="">{isRTL ? "جميع الموظفين" : "All Sales Reps"}</option>
+              {usersList.map((u) => (
+                <option key={u.id} value={u.id}>
+                  👤 {u.full_name} ({u.role})
+                </option>
+              ))}
+            </select>
+          )}
         </div>
       </div>
 

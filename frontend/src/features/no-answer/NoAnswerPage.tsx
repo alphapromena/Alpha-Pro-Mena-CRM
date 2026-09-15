@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../../lib/apiClient';
 import { useAuthStore } from '../../store/authStore';
+import { isManagerOrAbove } from '../../lib/permissions';
 import { LoadingSpinner } from '../../components/feedback/LoadingSpinner';
 import { EmptyState } from '../../components/feedback/EmptyState';
 import { Modal } from '../../components/ui/Modal';
@@ -26,8 +27,11 @@ export const NoAnswerPage: React.FC = () => {
   const [finalNotes, setFinalNotes] = useState('');
   const [isArchiving, setIsArchiving] = useState(false);
 
+  const hasManagerPrivileges = isManagerOrAbove(user?.role);
+
   // Fetch Users for Filter
   useEffect(() => {
+    if (!hasManagerPrivileges) return;
     const fetchUsers = async () => {
       try {
         const res = await api.get<any>('/users');
@@ -37,7 +41,7 @@ export const NoAnswerPage: React.FC = () => {
       }
     };
     fetchUsers();
-  }, []);
+  }, [hasManagerPrivileges]);
 
   const fetchQueue = async () => {
     setIsLoading(true);
@@ -133,7 +137,7 @@ export const NoAnswerPage: React.FC = () => {
 
         {/* User Filter & Overdue Toggle */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
-          {user?.role === 'MANAGER' && (
+          {hasManagerPrivileges && (
             <select
               className="form-select text-xs"
               style={{ width: '180px' }}

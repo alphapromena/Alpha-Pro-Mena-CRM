@@ -2,7 +2,8 @@
  * Alpha Pro MENA CRM Shared TypeScript Types
  */
 
-export type UserRole = 'TEAM_LEAD' | 'MANAGER' | 'USER' | 'ADMIN' | 'TEAM_LEADER' | 'SALES_USER' | 'DATA_OPS';
+export type CanonicalUserRole = 'TEAM_LEAD' | 'MANAGER' | 'USER' | 'DATA_OPS';
+export type UserRole = CanonicalUserRole | 'ADMIN' | 'TEAM_LEADER' | 'SALES_USER';
 
 export interface User {
   id: string;

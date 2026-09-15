@@ -17,6 +17,7 @@ import {
 } from 'recharts';
 import { api } from '../../lib/apiClient';
 import { useAuthStore } from '../../store/authStore';
+import { isManagerOrAbove } from '../../lib/permissions';
 import { LoadingSpinner } from '../../components/feedback/LoadingSpinner';
 import { Badge } from '../../components/ui/Badge';
 import {
@@ -142,9 +143,11 @@ export const DashboardPage: React.FC = () => {
   const [drilldownLoading, setDrilldownLoading] = useState<boolean>(false);
   const [drilldownTab, setDrilldownTab] = useState<'calls' | 'contacts' | 'tasks' | 'demos' | 'timeline'>('calls');
   const [activePerfTab, setActivePerfTab] = useState<'users' | 'managers'>('users');
+  const hasManagerPrivileges = isManagerOrAbove(user?.role);
 
-  // Fetch Users for filter dropdown
+  // Fetch Users for filter dropdown (managers and team leads only)
   useEffect(() => {
+    if (!hasManagerPrivileges) return;
     const fetchUsers = async () => {
       try {
         const res = await api.get<any>('/users');
@@ -154,7 +157,7 @@ export const DashboardPage: React.FC = () => {
       }
     };
     fetchUsers();
-  }, []);
+  }, [hasManagerPrivileges]);
 
   // Fetch Dashboard Data
   const fetchDashboard = async () => {
@@ -390,24 +393,26 @@ export const DashboardPage: React.FC = () => {
             marginTop: 'var(--space-1)',
           }}
         >
-          {/* User Filter */}
-          <div>
-            <label className="text-xs font-semibold text-muted block mb-1">
-              {isRTL ? "المندوب / الموظف" : "Sales Agent / Rep"}
-            </label>
-            <select
-              value={selectedUserId}
-              onChange={(e) => setSelectedUserId(e.target.value)}
-              className="input text-xs w-full"
-            >
-              <option value="">{isRTL ? "جميع المندوبين" : "All Sales Reps"}</option>
-              {usersList.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.full_name} ({u.role})
-                </option>
-              ))}
-            </select>
-          </div>
+          {/* Sales Agent Filter for Managers/Team Leads */}
+          {hasManagerPrivileges && (
+            <div>
+              <label className="text-xs font-semibold text-muted block mb-1">
+                {isRTL ? "المندوب / الموظف" : "Sales Agent / Rep"}
+              </label>
+              <select
+                value={selectedUserId}
+                onChange={(e) => setSelectedUserId(e.target.value)}
+                className="input text-xs w-full"
+              >
+                <option value="">{isRTL ? "جميع المندوبين" : "All Sales Reps"}</option>
+                {usersList.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.full_name} ({u.role})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
           {/* Call Outcome Filter */}
           <div>

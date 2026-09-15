@@ -584,3 +584,23 @@ async def force_run_migrations(
         safe_result["error"] = result.get("exception_type", "MigrationError")
     return safe_result
 
+
+@router.post("/run-migrations")
+async def force_run_migrations_auth(
+    current_user: User = Depends(require_manager_or_above),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Force-run all database schema migrations and bootstrap team accounts.
+    Accessible to authenticated Managers, Admins, and Team Leads.
+    """
+    from app.core.auto_migrate import run_migrations_now
+    result = await run_migrations_now(db)
+    safe_result = {
+        "success": result.get("success"),
+        "steps": result.get("steps"),
+    }
+    if not result.get("success"):
+        safe_result["error"] = result.get("exception_type", "MigrationError")
+    return {"data": safe_result}
+

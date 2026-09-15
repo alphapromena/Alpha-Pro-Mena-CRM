@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../../lib/apiClient';
 import { useAuthStore } from '../../store/authStore';
+import { isManagerOrAbove } from '../../lib/permissions';
 import { LoadingSpinner } from '../../components/feedback/LoadingSpinner';
 import { EmptyState } from '../../components/feedback/EmptyState';
 import { PhoneCall, CheckCircle2, Clock, Calendar, Copy, Check, Filter } from 'lucide-react';
@@ -19,8 +20,11 @@ export const RecallsPage: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
+  const hasManagerPrivileges = isManagerOrAbove(user?.role);
+
   // Fetch Users for Filter
   useEffect(() => {
+    if (!hasManagerPrivileges) return;
     const fetchUsers = async () => {
       try {
         const res = await api.get<any>('/users');
@@ -30,7 +34,7 @@ export const RecallsPage: React.FC = () => {
       }
     };
     fetchUsers();
-  }, []);
+  }, [hasManagerPrivileges]);
 
   const fetchRecalls = async () => {
     setIsLoading(true);
@@ -101,8 +105,8 @@ export const RecallsPage: React.FC = () => {
           </p>
         </div>
 
-        {/* User Filter Dropdown for Managers */}
-        {user?.role === 'MANAGER' && (
+        {/* User Filter Dropdown for Managers / Leads */}
+        {hasManagerPrivileges && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
             <select
               className="form-select text-xs"

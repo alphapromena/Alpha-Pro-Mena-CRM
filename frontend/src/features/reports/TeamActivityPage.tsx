@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../../lib/apiClient';
 import { useAuthStore } from '../../store/authStore';
+import { isManagerOrAbove } from '../../lib/permissions';
 import { LoadingSpinner } from '../../components/feedback/LoadingSpinner';
 import { EmptyState } from '../../components/feedback/EmptyState';
 import { Badge } from '../../components/ui/Badge';
@@ -53,8 +54,11 @@ export const TeamActivityPage: React.FC = () => {
   const [activityType, setActivityType] = useState<string>('ALL');
   const [usersList, setUsersList] = useState<any[]>([]);
 
+  const hasManagerPrivileges = isManagerOrAbove(user?.role);
+
   // Fetch Users for Filter
   useEffect(() => {
+    if (!hasManagerPrivileges) return;
     const fetchUsers = async () => {
       try {
         const res = await api.get<any>('/users');
@@ -64,7 +68,7 @@ export const TeamActivityPage: React.FC = () => {
       }
     };
     fetchUsers();
-  }, []);
+  }, [hasManagerPrivileges]);
 
   const fetchActivities = async () => {
     setIsLoading(true);
@@ -176,22 +180,24 @@ export const TeamActivityPage: React.FC = () => {
         }}
       >
         {/* User Filter */}
-        <select
-          className="form-select text-xs"
-          style={{ width: '180px' }}
-          value={selectedUserId}
-          onChange={(e) => {
-            setSelectedUserId(e.target.value);
-            setPage(1);
-          }}
-        >
-          <option value="">{isRTL ? "جميع الموظفين" : "All Sales Reps"}</option>
-          {usersList.map((u) => (
-            <option key={u.id} value={u.id}>
-              👤 {u.full_name} ({u.role})
-            </option>
-          ))}
-        </select>
+        {hasManagerPrivileges && (
+          <select
+            className="form-select text-xs"
+            style={{ width: '180px' }}
+            value={selectedUserId}
+            onChange={(e) => {
+              setSelectedUserId(e.target.value);
+              setPage(1);
+            }}
+          >
+            <option value="">{isRTL ? "جميع الموظفين" : "All Sales Reps"}</option>
+            {usersList.map((u) => (
+              <option key={u.id} value={u.id}>
+                👤 {u.full_name} ({u.role})
+              </option>
+            ))}
+          </select>
+        )}
 
         {/* Activity Type Filter */}
         <select

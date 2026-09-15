@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { api } from '../../lib/apiClient';
+import { useAuthStore } from '../../store/authStore';
+import { isManagerOrAbove } from '../../lib/permissions';
 import { Contact, TimelineItem, ContactStatus } from '../../types';
 import { Badge } from '../../components/ui/Badge';
 import { Modal } from '../../components/ui/Modal';
@@ -80,8 +82,12 @@ export const ContactDetailPage: React.FC = () => {
   const [editError, setEditError] = useState<string | null>(null);
   const [isSavingContact, setIsSavingContact] = useState(false);
 
+  const { user } = useAuthStore();
+  const hasManagerPrivileges = isManagerOrAbove(user?.role);
+
   // Fetch Users for Owner assignment
   useEffect(() => {
+    if (!hasManagerPrivileges) return;
     const fetchUsers = async () => {
       try {
         const res = await api.get<any>('/users');
@@ -91,7 +97,7 @@ export const ContactDetailPage: React.FC = () => {
       }
     };
     fetchUsers();
-  }, []);
+  }, [hasManagerPrivileges]);
 
   const handleOpenEditModal = () => {
     if (!contact) return;
@@ -727,22 +733,22 @@ export const ContactDetailPage: React.FC = () => {
                         item.type === 'call'
                           ? 'var(--color-primary-subtle)'
                           : item.type === 'status_change'
-                          ? 'var(--neutral-100)'
-                          : item.type === 'audit'
-                          ? 'rgba(255, 30, 87, 0.12)'
-                          : item.type === 'demo'
-                          ? 'rgba(212, 175, 55, 0.15)'
-                          : 'var(--color-success-bg)',
+                            ? 'var(--neutral-100)'
+                            : item.type === 'audit'
+                              ? 'rgba(255, 30, 87, 0.12)'
+                              : item.type === 'demo'
+                                ? 'rgba(212, 175, 55, 0.15)'
+                                : 'var(--color-success-bg)',
                       color:
                         item.type === 'call'
                           ? 'var(--color-accent)'
                           : item.type === 'status_change'
-                          ? 'var(--neutral-700)'
-                          : item.type === 'audit'
-                          ? '#FF1E57'
-                          : item.type === 'demo'
-                          ? '#B8860B'
-                          : 'var(--color-success)',
+                            ? 'var(--neutral-700)'
+                            : item.type === 'audit'
+                              ? '#FF1E57'
+                              : item.type === 'demo'
+                                ? '#B8860B'
+                                : 'var(--color-success)',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
@@ -1147,18 +1153,27 @@ export const ContactDetailPage: React.FC = () => {
             </div>
             <div className="form-group">
               <label className="form-label font-semibold text-xs">Lead Owner / Assignee</label>
-              <select
-                className="form-select"
-                value={editForm.owner_id}
-                onChange={(e) => setEditForm({ ...editForm, owner_id: e.target.value })}
-              >
-                <option value="">Unassigned</option>
-                {usersList.map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {u.full_name} ({u.role})
-                  </option>
-                ))}
-              </select>
+              {hasManagerPrivileges ? (
+                <select
+                  className="form-select"
+                  value={editForm.owner_id}
+                  onChange={(e) => setEditForm({ ...editForm, owner_id: e.target.value })}
+                >
+                  <option value="">Unassigned</option>
+                  {usersList.map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.full_name} ({u.role})
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  type="text"
+                  className="form-input"
+                  disabled
+                  value={contact?.owner_name || 'Assigned Agent'}
+                />
+              )}
             </div>
           </div>
 

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../../lib/apiClient';
 import { useAuthStore } from '../../store/authStore';
+import { isManagerOrAbove } from '../../lib/permissions';
 import { FollowUpItem } from '../../types';
 import { LoadingSpinner } from '../../components/feedback/LoadingSpinner';
 import { EmptyState } from '../../components/feedback/EmptyState';
@@ -122,6 +123,8 @@ export const FollowUpsPage: React.FC = () => {
   const [stepNotes, setStepNotes] = useState('');
   const [isSubmittingStep, setIsSubmittingStep] = useState(false);
 
+  const hasManagerPrivileges = isManagerOrAbove(user?.role);
+
   // Load Users List for filtering and assignments
   useEffect(() => {
     const loadUsers = async () => {
@@ -129,17 +132,19 @@ export const FollowUpsPage: React.FC = () => {
         const res = await api.get<any>('/users/eligible-demo-owners');
         setUsersList(res.data || []);
       } catch {
-        // fallback
-        try {
-          const res = await api.get<any>('/users');
-          setUsersList(res.data || []);
-        } catch (e) {
-          console.error('Failed to load users list', e);
+        // fallback (only if authorized)
+        if (hasManagerPrivileges) {
+          try {
+            const res = await api.get<any>('/users');
+            setUsersList(res.data || []);
+          } catch (e) {
+            console.error('Failed to load users list', e);
+          }
         }
       }
     };
     loadUsers();
-  }, []);
+  }, [hasManagerPrivileges]);
 
   // Fetch Follow-ups list
   const fetchFollowUps = async () => {

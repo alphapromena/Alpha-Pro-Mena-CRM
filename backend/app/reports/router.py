@@ -49,9 +49,10 @@ def _parse_date_range(
 ) -> tuple[datetime, datetime, str]:
     now = datetime.now(timezone.utc)
     today_start = datetime(now.year, now.month, now.day, 0, 0, 0, tzinfo=timezone.utc)
+    today_end = today_start.replace(hour=23, minute=59, second=59, microsecond=999999)
 
     if preset == "today":
-        return today_start, now, "today"
+        return today_start, today_end, "today"
     elif preset == "yesterday":
         yesterday_start = today_start - timedelta(days=1)
         yesterday_end = today_start - timedelta(microseconds=1)
@@ -59,42 +60,43 @@ def _parse_date_range(
     elif preset == "this_week":
         # Monday as start of week
         start_week = today_start - timedelta(days=now.weekday())
-        return start_week, now, "this_week"
+        week_end = today_start.replace(hour=23, minute=59, second=59, microsecond=999999) + timedelta(days=(6 - now.weekday()))
+        return start_week, week_end, "this_week"
     elif preset == "last_7_days":
-        return now - timedelta(days=7), now, "last_7_days"
+        return now - timedelta(days=7), today_end, "last_7_days"
     elif preset == "this_month":
         start_month = datetime(now.year, now.month, 1, 0, 0, 0, tzinfo=timezone.utc)
-        return start_month, now, "this_month"
+        return start_month, today_end, "this_month"
     elif preset == "all":
-        return datetime(2020, 1, 1, tzinfo=timezone.utc), now, "all"
+        return datetime(2020, 1, 1, tzinfo=timezone.utc), datetime(2099, 12, 31, 23, 59, 59, tzinfo=timezone.utc), "all"
     elif date_from or date_to:
-        # Parse date_from — default to start of today if omitted
         if date_from:
-            df = datetime.fromisoformat(date_from)
+            try:
+                df = datetime.fromisoformat(date_from.replace("Z", "+00:00") if date_from.endswith("Z") else date_from)
+            except Exception:
+                df = today_start
             if df.tzinfo is None:
                 df = df.replace(tzinfo=timezone.utc)
-            # If only a date was passed (no time component), treat as start-of-day
             if "T" not in date_from and " " not in date_from:
                 df = df.replace(hour=0, minute=0, second=0, microsecond=0)
         else:
             df = today_start
 
-        # Parse date_to — default to now if omitted
         if date_to:
-            dt = datetime.fromisoformat(date_to)
+            try:
+                dt = datetime.fromisoformat(date_to.replace("Z", "+00:00") if date_to.endswith("Z") else date_to)
+            except Exception:
+                dt = today_end
             if dt.tzinfo is None:
                 dt = dt.replace(tzinfo=timezone.utc)
-            # If only a date was passed (no time component), treat as end-of-day
-            # so records created throughout the day are all included
             if "T" not in date_to and " " not in date_to:
                 dt = dt.replace(hour=23, minute=59, second=59, microsecond=999999)
         else:
-            dt = now
+            dt = today_end
 
         return df, dt, "custom"
     else:
-        # Default when no filter is specified: today
-        return today_start, now, "today"
+        return today_start, today_end, "today"
 
 
 def _calc_performance_score(
@@ -171,16 +173,37 @@ async def management_dashboard(
     if (not current_user.is_manager_or_above) and (not user_id):
         user_id = str(current_user.id)
 
+    user_uuid: Optional[uuid.UUID] = None
+    if user_id:
+        try:
+            user_uuid = uuid.UUID(user_id)
+        except Exception:
+            user_uuid = None
+
+    company_uuid: Optional[uuid.UUID] = None
+    if company_id:
+        try:
+            company_uuid = uuid.UUID(company_id)
+        except Exception:
+            company_uuid = None
+
+    team_uuid: Optional[uuid.UUID] = None
+    if team_id:
+        try:
+            team_uuid = uuid.UUID(team_id)
+        except Exception:
+            team_uuid = None
+
     # ── 1. Calls & Outreach Filtering ──────────────────────────────────────────
     call_stmt = select(Call).where(Call.called_at.between(df, dt))
-    if user_id:
-        call_stmt = call_stmt.where(Call.user_id == uuid.UUID(user_id))
+    if user_uuid:
+        call_stmt = call_stmt.where(Call.user_id == user_uuid)
     if outcome:
         call_stmt = call_stmt.where(Call.outcome == outcome)
     if company_id or country:
         call_stmt = call_stmt.join(Contact, Call.contact_id == Contact.id)
-        if company_id:
-            call_stmt = call_stmt.where(Contact.company_id == uuid.UUID(company_id))
+        if company_uuid:
+            call_stmt = call_stmt.where(Contact.company_id == company_uuid)
         if country:
             call_stmt = call_stmt.where(Contact.country.ilike(f"%{country}%"))
 
@@ -236,8 +259,8 @@ async def management_dashboard(
     # ── 2. Emails & WhatsApp Activities ────────────────────────────────────────
     # Count direct activities + completed email/whatsapp tasks
     email_act_stmt = select(func.count(EmailActivity.id)).where(EmailActivity.sent_at.between(df, dt))
-    if user_id:
-        email_act_stmt = email_act_stmt.where(EmailActivity.user_id == uuid.UUID(user_id))
+    if user_uuid:
+        email_act_stmt = email_act_stmt.where(EmailActivity.user_id == user_uuid)
     email_act_count = (await db.execute(email_act_stmt)).scalar_one() or 0
 
     email_task_stmt = select(func.count(Task.id)).where(
@@ -245,14 +268,14 @@ async def management_dashboard(
         Task.status == TaskStatus.COMPLETED,
         Task.completed_at.between(df, dt),
     )
-    if user_id:
-        email_task_stmt = email_task_stmt.where(Task.assigned_to == uuid.UUID(user_id))
+    if user_uuid:
+        email_task_stmt = email_task_stmt.where(Task.assigned_to == user_uuid)
     email_task_count = (await db.execute(email_task_stmt)).scalar_one() or 0
     total_emails = email_act_count + email_task_count
 
     whatsapp_act_stmt = select(func.count(WhatsAppActivity.id)).where(WhatsAppActivity.sent_at.between(df, dt))
-    if user_id:
-        whatsapp_act_stmt = whatsapp_act_stmt.where(WhatsAppActivity.user_id == uuid.UUID(user_id))
+    if user_uuid:
+        whatsapp_act_stmt = whatsapp_act_stmt.where(WhatsAppActivity.user_id == user_uuid)
     whatsapp_act_count = (await db.execute(whatsapp_act_stmt)).scalar_one() or 0
 
     whatsapp_task_stmt = select(func.count(Task.id)).where(
@@ -260,8 +283,8 @@ async def management_dashboard(
         Task.status == TaskStatus.COMPLETED,
         Task.completed_at.between(df, dt),
     )
-    if user_id:
-        whatsapp_task_stmt = whatsapp_task_stmt.where(Task.assigned_to == uuid.UUID(user_id))
+    if user_uuid:
+        whatsapp_task_stmt = whatsapp_task_stmt.where(Task.assigned_to == user_uuid)
     whatsapp_task_count = (await db.execute(whatsapp_task_stmt)).scalar_one() or 0
     total_whatsapp = whatsapp_act_count + whatsapp_task_count
 
@@ -273,10 +296,10 @@ async def management_dashboard(
         selectinload(Demo.company),
         selectinload(Demo.owner),
     )
-    if user_id:
-        demo_stmt = demo_stmt.where(Demo.owner_id == uuid.UUID(user_id))
-    if company_id:
-        demo_stmt = demo_stmt.where(Demo.company_id == uuid.UUID(company_id))
+    if user_uuid:
+        demo_stmt = demo_stmt.where(Demo.owner_id == user_uuid)
+    if company_uuid:
+        demo_stmt = demo_stmt.where(Demo.company_id == company_uuid)
     if demo_stage:
         demo_stmt = demo_stmt.where(or_(Demo.stage == demo_stage, Demo.status == demo_stage))
 
@@ -336,16 +359,16 @@ async def management_dashboard(
 
     # ── 4. Follow-ups & Recalls ────────────────────────────────────────────────
     fu_stmt = select(FollowUp).where(FollowUp.created_at.between(df, dt))
-    if user_id:
-        fu_stmt = fu_stmt.where(FollowUp.user_id == uuid.UUID(user_id))
+    if user_uuid:
+        fu_stmt = fu_stmt.where(FollowUp.user_id == user_uuid)
     fu_rows = (await db.execute(fu_stmt)).scalars().all()
     total_follow_ups = len(fu_rows)
     pending_follow_ups = len([f for f in fu_rows if f.status == "PENDING"])
     overdue_follow_ups = len([f for f in fu_rows if f.status == "PENDING" and is_past(f.due_at, now)])
 
     recall_stmt = select(Recall).where(Recall.created_at.between(df, dt))
-    if user_id:
-        recall_stmt = recall_stmt.where(Recall.user_id == uuid.UUID(user_id))
+    if user_uuid:
+        recall_stmt = recall_stmt.where(Recall.user_id == user_uuid)
     recall_rows = (await db.execute(recall_stmt)).scalars().all()
     total_recalls = len(recall_rows) + outcomes_count.get("CALL_LATER", 0)
     pending_recalls = len([r for r in recall_rows if r.status == "PENDING"])
@@ -356,10 +379,10 @@ async def management_dashboard(
         Opportunity.deleted_at.is_(None),
         Opportunity.created_at.between(df, dt),
     )
-    if user_id:
-        opp_stmt = opp_stmt.where(Opportunity.owner_id == uuid.UUID(user_id))
-    if company_id:
-        opp_stmt = opp_stmt.where(Opportunity.company_id == uuid.UUID(company_id))
+    if user_uuid:
+        opp_stmt = opp_stmt.where(Opportunity.owner_id == user_uuid)
+    if company_uuid:
+        opp_stmt = opp_stmt.where(Opportunity.company_id == company_uuid)
 
     opp_rows = (await db.execute(opp_stmt)).scalars().all()
     opps_new = len(opp_rows)
@@ -370,8 +393,8 @@ async def management_dashboard(
 
     # ── 6. Tasks & Overdue Tasks ───────────────────────────────────────────────
     task_stmt = select(Task).where(Task.created_at.between(df, dt))
-    if user_id:
-        task_stmt = task_stmt.where(Task.assigned_to == uuid.UUID(user_id))
+    if user_uuid:
+        task_stmt = task_stmt.where(Task.assigned_to == user_uuid)
     task_rows = (await db.execute(task_stmt)).scalars().all()
     total_tasks = len(task_rows)
     open_tasks = len([t for t in task_rows if t.status in [TaskStatus.OPEN, TaskStatus.IN_PROGRESS]])
@@ -380,14 +403,14 @@ async def management_dashboard(
         Task.due_at < now,
         Task.status.in_([TaskStatus.OPEN, TaskStatus.IN_PROGRESS, TaskStatus.OVERDUE]),
     )
-    if user_id:
-        overdue_stmt = overdue_stmt.where(Task.assigned_to == uuid.UUID(user_id))
+    if user_uuid:
+        overdue_stmt = overdue_stmt.where(Task.assigned_to == user_uuid)
     overdue_tasks_count = (await db.execute(overdue_stmt)).scalar_one() or 0
 
     # ── 7. Total Contacts in Scope ────────────────────────────────────────────
     base_contact_stmt = select(func.count(Contact.id)).where(Contact.deleted_at.is_(None))
-    if user_id:
-        base_contact_stmt = base_contact_stmt.where(Contact.owner_id == uuid.UUID(user_id))
+    if user_uuid:
+        base_contact_stmt = base_contact_stmt.where(Contact.owner_id == user_uuid)
     if country:
         base_contact_stmt = base_contact_stmt.where(Contact.country.ilike(f"%{country}%"))
     
@@ -398,8 +421,8 @@ async def management_dashboard(
         Contact.deleted_at.is_(None),
         Contact.status.not_in([ContactStatus.ARCHIVED, ContactStatus.PENDING_CLAIM, ContactStatus.UNASSIGNED]),
     )
-    if user_id:
-        active_contacts_stmt = active_contacts_stmt.where(Contact.owner_id == uuid.UUID(user_id))
+    if user_uuid:
+        active_contacts_stmt = active_contacts_stmt.where(Contact.owner_id == user_uuid)
     if country:
         active_contacts_stmt = active_contacts_stmt.where(Contact.country.ilike(f"%{country}%"))
     active_leads_count = (await db.execute(active_contacts_stmt)).scalar_one() or 0
@@ -409,8 +432,8 @@ async def management_dashboard(
         Contact.deleted_at.is_(None),
         Contact.status == ContactStatus.ARCHIVED,
     )
-    if user_id:
-        archived_contacts_stmt = archived_contacts_stmt.where(Contact.owner_id == uuid.UUID(user_id))
+    if user_uuid:
+        archived_contacts_stmt = archived_contacts_stmt.where(Contact.owner_id == user_uuid)
     archived_contacts_count = (await db.execute(archived_contacts_stmt)).scalar_one() or 0
 
     # Personal Pool (pending claim by sales rep)
@@ -418,8 +441,9 @@ async def management_dashboard(
         Contact.deleted_at.is_(None),
         Contact.status == ContactStatus.PENDING_CLAIM,
     )
-    if user_id:
-        personal_pool_stmt = personal_pool_stmt.where(Contact.owner_id == uuid.UUID(user_id))
+    if user_uuid:
+        personal_pool_stmt = personal_pool_stmt.where(Contact.owner_id == user_uuid)
+    personal_pool_count = (await db.execute(personal_pool_stmt)).scalar_one() or 0
     personal_pool_count = (await db.execute(personal_pool_stmt)).scalar_one() or 0
 
     # Unassigned leads
@@ -441,8 +465,8 @@ async def management_dashboard(
 
     # ── 9. User-by-User Breakdown ─────────────────────────────────────────────
     users_stmt = select(User).where(User.is_active.is_(True), User.deleted_at.is_(None)).options(selectinload(User.team))
-    if team_id:
-        users_stmt = users_stmt.where(User.team_id == uuid.UUID(team_id))
+    if team_uuid:
+        users_stmt = users_stmt.where(User.team_id == team_uuid)
     users_list = (await db.execute(users_stmt)).scalars().all()
 
     # Pre-fetch all calls in period grouped by user
@@ -567,13 +591,18 @@ async def management_dashboard(
     team_members_map: Dict[str, List[dict]] = {}
 
     for u in users_list:
-        # Operational Performance table shows ONLY sales rep (USER-role) accounts.
-        # Team leads, managers, and data-ops users are not evaluated as sales reps.
-        if u.role != UserRole.USER:
-            continue
-
         uid_str = str(u.id)
         u_calls = user_calls_map.get(uid_str, [])
+        u_demos = user_demos_map.get(uid_str, [])
+        u_opps = user_opps_map.get(uid_str, [])
+        u_fu_count = user_fu_map.get(uid_str, 0)
+        u_recall_count = user_recall_map.get(uid_str, 0)
+
+        # Operational Performance table shows sales reps (USER), team leads, and any account with activity
+        has_activity = bool(u_calls or u_demos or u_opps or u_fu_count or u_recall_count)
+        if u.role not in (UserRole.USER, UserRole.TEAM_LEAD) and not has_activity:
+            continue
+
         u_total_calls = len(u_calls)
         
         u_outcomes: Dict[str, int] = {}
