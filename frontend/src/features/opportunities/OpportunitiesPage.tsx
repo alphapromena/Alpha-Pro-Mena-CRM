@@ -21,6 +21,7 @@ import {
   DollarSign,
   Briefcase,
   Edit3,
+  Trash2,
 } from 'lucide-react';
 import { useTranslation } from '../../i18n';
 
@@ -66,11 +67,34 @@ export const OpportunitiesPage: React.FC = () => {
   const [stepStatus, setStepStatus] = useState('COMPLETED');
   const [isSaving, setIsSaving] = useState(false);
 
+  // Create Opportunity Modal
+  const [showCreateOppModal, setShowCreateOppModal] = useState(false);
+  const [createOppForm, setCreateOppForm] = useState({
+    title: '',
+    company_name_snapshot: '',
+    contact_person: '',
+    company_id: '',
+    owner_id: user?.id || '',
+    stage: 'NEW',
+    value: 0,
+    probability: 50,
+    expected_close_at: '',
+    notes: '',
+    next_step: '',
+  });
+  const [isCreatingOpp, setIsCreatingOpp] = useState(false);
+
   // Edit Opportunity Modal
   const [editingOpp, setEditingOpp] = useState<any | null>(null);
+  const [editTitle, setEditTitle] = useState('');
   const [editStage, setEditStage] = useState('NEW');
   const [editValue, setEditValue] = useState<number>(0);
   const [editProbability, setEditProbability] = useState<number>(50);
+  const [editCompanySnapshot, setEditCompanySnapshot] = useState('');
+  const [editContactPerson, setEditContactPerson] = useState('');
+  const [editExpectedClose, setEditExpectedClose] = useState('');
+  const [editNotes, setEditNotes] = useState('');
+  const [editNextStep, setEditNextStep] = useState('');
   const [isUpdatingOpp, setIsUpdatingOpp] = useState(false);
 
   // Fetch Users & Companies
@@ -157,15 +181,51 @@ export const OpportunitiesPage: React.FC = () => {
     }
   };
 
+  const handleCreateOpp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!createOppForm.title.trim()) {
+      alert('Opportunity title is required');
+      return;
+    }
+    setIsCreatingOpp(true);
+    try {
+      await api.post('/opportunities', {
+        title: createOppForm.title.trim(),
+        company_name_snapshot: createOppForm.company_name_snapshot.trim() || undefined,
+        contact_person: createOppForm.contact_person.trim() || undefined,
+        company_id: createOppForm.company_id || undefined,
+        owner_id: createOppForm.owner_id || undefined,
+        stage: createOppForm.stage,
+        value: Number(createOppForm.value) || 0,
+        probability: Number(createOppForm.probability) || 50,
+        expected_close_at: createOppForm.expected_close_at ? new Date(createOppForm.expected_close_at).toISOString() : undefined,
+        notes: createOppForm.notes.trim() || undefined,
+        next_step: createOppForm.next_step.trim() || undefined,
+      });
+      setShowCreateOppModal(false);
+      await fetchOpportunities();
+    } catch (err: any) {
+      alert(err.message || 'Failed to create opportunity');
+    } finally {
+      setIsCreatingOpp(false);
+    }
+  };
+
   const handleUpdateOpp = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingOpp) return;
     setIsUpdatingOpp(true);
     try {
       await api.patch(`/opportunities/${editingOpp.id}`, {
+        title: editTitle.trim() || undefined,
         stage: editStage,
         value: editValue,
         probability: editProbability,
+        company_name_snapshot: editCompanySnapshot.trim() || undefined,
+        contact_person: editContactPerson.trim() || undefined,
+        expected_close_at: editExpectedClose ? new Date(editExpectedClose).toISOString() : undefined,
+        notes: editNotes.trim() || undefined,
+        next_step: editNextStep.trim() || undefined,
       });
       setEditingOpp(null);
       await fetchOpportunities();
@@ -173,6 +233,18 @@ export const OpportunitiesPage: React.FC = () => {
       alert(err.message || 'Failed to update opportunity');
     } finally {
       setIsUpdatingOpp(false);
+    }
+  };
+
+  const handleDeleteOpp = async (oppId: string, oppTitle: string) => {
+    if (!confirm(isRTL ? `هل أنت متأكد من حذف الصفقة "${oppTitle}"؟` : `Are you sure you want to delete opportunity "${oppTitle}"?`)) {
+      return;
+    }
+    try {
+      await api.delete(`/opportunities/${oppId}`);
+      await fetchOpportunities();
+    } catch (err: any) {
+      alert(err.message || 'Failed to delete opportunity');
     }
   };
 
@@ -208,8 +280,35 @@ export const OpportunitiesPage: React.FC = () => {
           </p>
         </div>
 
-        {/* User Filter Dropdown for Managers */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+        {/* Actions & Filters */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
+          {viewTab === 'pipeline' && (
+            <button
+              onClick={() => {
+                setCreateOppForm({
+                  title: '',
+                  company_name_snapshot: '',
+                  contact_person: '',
+                  company_id: '',
+                  owner_id: user?.id || '',
+                  stage: 'NEW',
+                  value: 0,
+                  probability: 50,
+                  expected_close_at: '',
+                  notes: '',
+                  next_step: '',
+                });
+                setShowCreateOppModal(true);
+              }}
+              className="btn btn-accent btn-md"
+              style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+            >
+              <Plus size={16} />
+              <span>{isRTL ? "إضافة فرصة جديدة" : "+ New Opportunity"}</span>
+            </button>
+          )}
+
+          {/* User Filter Dropdown for Managers */}
           <select
             className="form-select text-xs"
             style={{ width: '180px' }}
@@ -317,11 +416,20 @@ export const OpportunitiesPage: React.FC = () => {
                       </td>
                       <td>
                         <span className="font-semibold text-sm text-dark">{o.title}</span>
-                        {o.contact_name && <div className="text-xs text-muted">Contact: {o.contact_name}</div>}
+                        {(o.contact_person || o.contact_name) && (
+                          <div className="text-xs text-muted" style={{ marginTop: '2px' }}>
+                            👤 {o.contact_person || o.contact_name}
+                          </div>
+                        )}
+                        {o.next_step && (
+                          <div className="text-xs font-semibold" style={{ color: 'var(--color-accent)', marginTop: '2px' }}>
+                            Next: {o.next_step}
+                          </div>
+                        )}
                       </td>
                       <td>
                         <span className="text-sm font-medium" style={{ color: 'var(--neutral-800)' }}>
-                          {o.company_name || '—'}
+                          {o.company_name_snapshot || o.company_name || '—'}
                         </span>
                       </td>
                       <td>
@@ -343,19 +451,34 @@ export const OpportunitiesPage: React.FC = () => {
                         </span>
                       </td>
                       <td>
-                        <button
-                          onClick={() => {
-                            setEditingOpp(o);
-                            setEditStage(o.stage);
-                            setEditValue(o.value || 0);
-                            setEditProbability(o.probability || 50);
-                          }}
-                          className="btn btn-secondary btn-sm"
-                          style={{ display: 'flex', alignItems: 'center', gap: '4px' }}
-                        >
-                          <Edit3 size={13} />
-                          <span>{isRTL ? "تعديل" : "Edit"}</span>
-                        </button>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <button
+                            onClick={() => {
+                              setEditingOpp(o);
+                              setEditTitle(o.title || '');
+                              setEditStage(o.stage || 'NEW');
+                              setEditValue(o.value || 0);
+                              setEditProbability(o.probability || 50);
+                              setEditCompanySnapshot(o.company_name_snapshot || o.company_name || '');
+                              setEditContactPerson(o.contact_person || o.contact_name || '');
+                              setEditExpectedClose(o.expected_close_at ? o.expected_close_at.slice(0, 10) : '');
+                              setEditNotes(o.notes || '');
+                              setEditNextStep(o.next_step || '');
+                            }}
+                            className="btn btn-secondary btn-sm"
+                            style={{ display: 'flex', alignItems: 'center', gap: '4px' }}
+                          >
+                            <Edit3 size={13} />
+                            <span>{isRTL ? "تعديل" : "Edit"}</span>
+                          </button>
+                          <button
+                            onClick={() => handleDeleteOpp(o.id, o.title)}
+                            className="btn btn-ghost btn-sm text-danger"
+                            title={isRTL ? "حذف الصفقة" : "Delete Opportunity"}
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -509,7 +632,7 @@ export const OpportunitiesPage: React.FC = () => {
       <Modal
         isOpen={!!editingOpp}
         onClose={() => setEditingOpp(null)}
-        title={isRTL ? "تعديل مرحلة وقيمة الفرصة البيعية" : "Update Opportunity Deal"}
+        title={isRTL ? "تعديل تفاصيل الفرصة البيعية" : "Update Opportunity Deal"}
         footer={
           <>
             <button
@@ -530,11 +653,37 @@ export const OpportunitiesPage: React.FC = () => {
           </>
         }
       >
-        <form onSubmit={handleUpdateOpp}>
-          <div style={{ marginBottom: 'var(--space-4)', padding: 'var(--space-3)', backgroundColor: 'var(--bg-subtle)', borderRadius: 'var(--radius-md)' }}>
-            <div className="text-xs text-muted">OPPORTUNITY</div>
-            <div className="font-bold text-sm" style={{ color: 'var(--neutral-900)', marginTop: '2px' }}>
-              {editingOpp?.title} ({editingOpp?.company_name})
+        <form onSubmit={handleUpdateOpp} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+          <div className="form-group">
+            <label className="form-label">{isRTL ? "عنوان الفرصة *" : "Opportunity Title *"}</label>
+            <input
+              type="text"
+              required
+              className="form-input"
+              value={editTitle}
+              onChange={(e) => setEditTitle(e.target.value)}
+            />
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-3)' }}>
+            <div className="form-group">
+              <label className="form-label">{isRTL ? "الشركة (اسم حر)" : "Company (Snapshot)"}</label>
+              <input
+                type="text"
+                className="form-input"
+                value={editCompanySnapshot}
+                onChange={(e) => setEditCompanySnapshot(e.target.value)}
+              />
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">{isRTL ? "الشخص المسؤول لدى العميل" : "Contact Person"}</label>
+              <input
+                type="text"
+                className="form-input"
+                value={editContactPerson}
+                onChange={(e) => setEditContactPerson(e.target.value)}
+              />
             </div>
           </div>
 
@@ -576,6 +725,190 @@ export const OpportunitiesPage: React.FC = () => {
                 onChange={(e) => setEditProbability(parseInt(e.target.value) || 0)}
               />
             </div>
+          </div>
+
+          <div className="form-group">
+            <label className="form-label">{isRTL ? "التاريخ المتوقع للإغلاق" : "Expected Close Date"}</label>
+            <input
+              type="date"
+              className="form-input"
+              value={editExpectedClose}
+              onChange={(e) => setEditExpectedClose(e.target.value)}
+            />
+          </div>
+
+          <div className="form-group">
+            <label className="form-label">{isRTL ? "الملاحظات" : "Notes"}</label>
+            <textarea
+              rows={2}
+              className="form-textarea"
+              value={editNotes}
+              onChange={(e) => setEditNotes(e.target.value)}
+            />
+          </div>
+
+          <div className="form-group">
+            <label className="form-label">{isRTL ? "الخطوة التالية" : "Next Step"}</label>
+            <input
+              type="text"
+              className="form-input"
+              value={editNextStep}
+              onChange={(e) => setEditNextStep(e.target.value)}
+            />
+          </div>
+        </form>
+      </Modal>
+
+      {/* ── Create Opportunity Modal ─────────────────────────────────────── */}
+      <Modal
+        isOpen={showCreateOppModal}
+        onClose={() => setShowCreateOppModal(false)}
+        title={isRTL ? "إضافة فرصة بيعية جديدة" : "Create New Opportunity"}
+        footer={
+          <>
+            <button
+              type="button"
+              onClick={() => setShowCreateOppModal(false)}
+              className="btn btn-secondary"
+            >
+              {isRTL ? "إلغاء" : "Cancel"}
+            </button>
+            <button
+              type="button"
+              disabled={isCreatingOpp}
+              onClick={handleCreateOpp}
+              className="btn btn-accent"
+            >
+              {isCreatingOpp ? (isRTL ? 'جاري الإنشاء...' : 'Creating...') : (isRTL ? 'إنشاء الفرصة' : 'Create Opportunity')}
+            </button>
+          </>
+        }
+      >
+        <form onSubmit={handleCreateOpp} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+          <div className="form-group">
+            <label className="form-label">{isRTL ? "عنوان الفرصة *" : "Opportunity Title *"}</label>
+            <input
+              type="text"
+              required
+              className="form-input"
+              placeholder="e.g. Enterprise License Expansion 2026"
+              value={createOppForm.title}
+              onChange={(e) => setCreateOppForm({ ...createOppForm, title: e.target.value })}
+            />
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-3)' }}>
+            <div className="form-group">
+              <label className="form-label">{isRTL ? "الشركة (اسم حر أو معروف)" : "Company Name (Snapshot)"}</label>
+              <input
+                type="text"
+                className="form-input"
+                placeholder="e.g. Saudi Aramco"
+                value={createOppForm.company_name_snapshot}
+                onChange={(e) => setCreateOppForm({ ...createOppForm, company_name_snapshot: e.target.value })}
+              />
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">{isRTL ? "الشخص المسؤول لدى العميل" : "Contact Person"}</label>
+              <input
+                type="text"
+                className="form-input"
+                placeholder="e.g. Eng. Khalid Al-Otaibi"
+                value={createOppForm.contact_person}
+                onChange={(e) => setCreateOppForm({ ...createOppForm, contact_person: e.target.value })}
+              />
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-3)' }}>
+            <div className="form-group">
+              <label className="form-label">{isRTL ? "المرحلة البيعية *" : "Pipeline Stage *"}</label>
+              <select
+                className="form-select"
+                value={createOppForm.stage}
+                onChange={(e) => setCreateOppForm({ ...createOppForm, stage: e.target.value })}
+              >
+                <option value="NEW">NEW (جديدة)</option>
+                <option value="QUALIFIED">QUALIFIED (مؤهلة)</option>
+                <option value="PROPOSAL">PROPOSAL (عرض سعر مرسل)</option>
+                <option value="NEGOTIATION">NEGOTIATION (مفاوضات)</option>
+                <option value="WON">WON (تم الفوز بالصفقة 🏆)</option>
+                <option value="LOST">LOST (خسارة الصفقة)</option>
+              </select>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">{isRTL ? "المسؤول عن الفرصة" : "Sales Owner"}</label>
+              <select
+                className="form-select"
+                value={createOppForm.owner_id}
+                onChange={(e) => setCreateOppForm({ ...createOppForm, owner_id: e.target.value })}
+              >
+                <option value="">Current User</option>
+                {usersList.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.full_name} ({u.role})
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-3)' }}>
+            <div className="form-group">
+              <label className="form-label">{isRTL ? "القيمة المتوقعة ($)" : "Estimated Value ($)"}</label>
+              <input
+                type="number"
+                className="form-input"
+                value={createOppForm.value}
+                onChange={(e) => setCreateOppForm({ ...createOppForm, value: parseFloat(e.target.value) || 0 })}
+              />
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">{isRTL ? "احتمالية النجاح (%)" : "Probability (%)"}</label>
+              <input
+                type="number"
+                min={0}
+                max={100}
+                className="form-input"
+                value={createOppForm.probability}
+                onChange={(e) => setCreateOppForm({ ...createOppForm, probability: parseInt(e.target.value) || 0 })}
+              />
+            </div>
+          </div>
+
+          <div className="form-group">
+            <label className="form-label">{isRTL ? "التاريخ المتوقع للإغلاق" : "Expected Close Date"}</label>
+            <input
+              type="date"
+              className="form-input"
+              value={createOppForm.expected_close_at}
+              onChange={(e) => setCreateOppForm({ ...createOppForm, expected_close_at: e.target.value })}
+            />
+          </div>
+
+          <div className="form-group">
+            <label className="form-label">{isRTL ? "الملاحظات" : "Notes"}</label>
+            <textarea
+              rows={2}
+              className="form-textarea"
+              placeholder="Key requirements, budget timeline, decision process..."
+              value={createOppForm.notes}
+              onChange={(e) => setCreateOppForm({ ...createOppForm, notes: e.target.value })}
+            />
+          </div>
+
+          <div className="form-group">
+            <label className="form-label">{isRTL ? "الخطوة التالية" : "Next Step"}</label>
+            <input
+              type="text"
+              className="form-input"
+              placeholder="e.g. Schedule commercial pricing review call..."
+              value={createOppForm.next_step}
+              onChange={(e) => setCreateOppForm({ ...createOppForm, next_step: e.target.value })}
+            />
           </div>
         </form>
       </Modal>

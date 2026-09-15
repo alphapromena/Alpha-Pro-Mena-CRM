@@ -29,34 +29,91 @@ import {
 } from 'lucide-react';
 import { useTranslation } from '../../i18n';
 
-const CopyBtn: React.FC<{ text: string; label: string }> = ({ text, label }) => {
+const CopyBtn: React.FC<{ text: string; label: string; showToast?: boolean }> = ({ text, label, showToast = true }) => {
   const [copied, setCopied] = useState(false);
+  const [failed, setFailed] = useState(false);
 
-  const handleCopy = (e: React.MouseEvent) => {
+  const handleCopy = async (e: React.MouseEvent | React.KeyboardEvent) => {
     e.stopPropagation();
-    navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+    e.preventDefault();
+    const cleanText = (text || '').trim();
+    if (!cleanText) return;
+
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(cleanText);
+      } else {
+        const textarea = document.createElement('textarea');
+        textarea.value = cleanText;
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.focus();
+        textarea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textarea);
+      }
+      setCopied(true);
+      setFailed(false);
+      setTimeout(() => setCopied(false), 1800);
+    } catch {
+      setFailed(true);
+      setTimeout(() => setFailed(false), 2000);
+    }
   };
 
   return (
-    <button
-      onClick={handleCopy}
-      type="button"
-      title={copied ? `Copied ${label}!` : `Copy ${label}`}
-      style={{
-        background: 'none',
-        border: 'none',
-        padding: '2px 4px',
-        cursor: 'pointer',
-        color: copied ? 'var(--color-success)' : 'var(--neutral-400)',
-        display: 'inline-flex',
-        alignItems: 'center',
-        transition: 'color 0.15s ease',
-      }}
-    >
-      {copied ? <Check size={13} /> : <Copy size={13} />}
-    </button>
+    <span style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
+      <button
+        onClick={handleCopy}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            handleCopy(e);
+          }
+        }}
+        type="button"
+        aria-label={copied ? `${label} copied` : `Copy ${label}`}
+        title={copied ? `${label} copied` : failed ? `Failed to copy` : `Copy ${label}`}
+        style={{
+          background: 'none',
+          border: 'none',
+          padding: '2px 4px',
+          cursor: 'pointer',
+          color: copied ? 'var(--color-success, #16a34a)' : failed ? 'var(--color-danger, #dc2626)' : 'var(--neutral-400, #94a3b8)',
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          borderRadius: '4px',
+          transition: 'color 0.15s ease',
+        }}
+      >
+        {copied ? <Check size={13} /> : <Copy size={13} />}
+      </button>
+      {copied && showToast && (
+        <span
+          role="status"
+          style={{
+            position: 'absolute',
+            bottom: '100%',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            marginBottom: '4px',
+            backgroundColor: '#1e293b',
+            color: '#ffffff',
+            fontSize: '10px',
+            fontWeight: 600,
+            padding: '2px 6px',
+            borderRadius: '4px',
+            whiteSpace: 'nowrap',
+            boxShadow: '0 2px 4px rgba(0,0,0,0.15)',
+            zIndex: 100,
+            pointerEvents: 'none',
+          }}
+        >
+          {label} copied
+        </span>
+      )}
+    </span>
   );
 };
 
@@ -1291,21 +1348,24 @@ export const ContactsPage: React.FC = () => {
                         zIndex: 10,
                       }}
                     >
-                      <button
-                        onClick={() => handleNavigateToContact(c.id)}
-                        className="font-semibold text-xs text-left"
-                        style={{
-                          color: 'var(--neutral-900)',
-                          background: 'none',
-                          border: 'none',
-                          padding: 0,
-                          cursor: 'pointer',
-                          textDecoration: 'underline',
-                          textUnderlineOffset: '2px',
-                        }}
-                      >
-                        {c.full_name}
-                      </button>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        <button
+                          onClick={() => handleNavigateToContact(c.id)}
+                          className="font-semibold text-xs text-left"
+                          style={{
+                            color: 'var(--neutral-900)',
+                            background: 'none',
+                            border: 'none',
+                            padding: 0,
+                            cursor: 'pointer',
+                            textDecoration: 'underline',
+                            textUnderlineOffset: '2px',
+                          }}
+                        >
+                          {c.full_name}
+                        </button>
+                        {c.full_name && <CopyBtn text={c.full_name} label="Name" showToast={true} />}
+                      </div>
                       <div className="text-xs text-muted">{c.country || '—'}</div>
                     </td>
 

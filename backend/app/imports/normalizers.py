@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import unicodedata
 from typing import FrozenSet, Optional, Tuple
 
 
@@ -196,3 +197,30 @@ def phones_could_match(phone_a: str, phone_b: str) -> bool:
 
     # Last-9 overlap within same country (sufficient to distinguish individuals within a country)
     return len(a) >= 9 and len(b) >= 9 and a[-9:] == b[-9:]
+
+
+def normalize_company_name(raw: object) -> Tuple[str, str]:
+    """
+    Normalizes a company name for deduplication while preserving a clean display name (req 7).
+
+    Returns (display_name, normalized_key):
+    - display_name: Unicode NFC normalized, trimmed, collapsed whitespace.
+    - normalized_key: display_name converted to lower case, punctuation removed/standardized
+      (e.g., periods, commas, extra symbols stripped for matching, e.g. "Acme Corp." -> "acme corp").
+    """
+    if raw is None:
+        return ("", "")
+    text = str(raw)
+    # Unicode normalization to NFC
+    text = unicodedata.normalize("NFC", text)
+    # Collapse multiple whitespaces and trim
+    text = re.sub(r"\s+", " ", text).strip()
+    if not text or text.lower() in ("none", "n/a", "na", "-", "--", "#n/a", "null", "undefined"):
+        return ("", "")
+
+    display_name = text
+    # Matching key: lowercase, strip punctuation
+    key = display_name.lower()
+    key = re.sub(r"[.,\-–—_/\\()]+", " ", key)
+    key = re.sub(r"\s+", " ", key).strip()
+    return (display_name, key)

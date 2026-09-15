@@ -617,3 +617,129 @@ async def claim_bulk_contacts(
         "claimed_count": len(claimed),
         "message": f"Successfully claimed {len(claimed)} contacts into your active list.",
     }
+
+
+class LogEmailBody(BaseModel):
+    subject: Optional[str] = None
+    body_preview: Optional[str] = None
+    sent_at: Optional[str] = None
+    task_id: Optional[str] = None
+
+
+@router.post("/{contact_id}/emails", status_code=201)
+async def log_email_activity(
+    contact_id: uuid.UUID,
+    body: LogEmailBody,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Log an outbound email activity on a contact."""
+    from datetime import timezone
+    from app.models.activity import EmailActivity
+    from app.models.audit import AuditLog
+
+    service = ContactService(db)
+    contact = await service.get_contact(contact_id, current_user)
+
+    sent_at_dt = (
+        datetime.fromisoformat(body.sent_at)
+        if body.sent_at
+        else datetime.now(timezone.utc)
+    )
+    task_uuid = uuid.UUID(body.task_id) if body.task_id else None
+
+    email_act = EmailActivity(
+        contact_id=contact.id,
+        user_id=current_user.id,
+        subject=body.subject,
+        body_preview=body.body_preview,
+        direction="OUTBOUND",
+        sent_at=sent_at_dt,
+        task_id=task_uuid,
+    )
+    db.add(email_act)
+
+    audit = AuditLog(
+        actor_id=current_user.id,
+        entity_type="contact",
+        entity_id=contact.id,
+        action="email.sent",
+        notes=f"Email sent: {body.subject or 'No subject'}",
+    )
+    db.add(audit)
+    await db.commit()
+    await db.refresh(email_act)
+
+    return {
+        "data": {
+            "id": str(email_act.id),
+            "contact_id": str(email_act.contact_id),
+            "user_id": str(email_act.user_id) if email_act.user_id else None,
+            "subject": email_act.subject,
+            "direction": email_act.direction,
+            "sent_at": email_act.sent_at.isoformat(),
+        },
+        "message": "Email activity recorded successfully.",
+    }
+
+
+class LogWhatsAppBody(BaseModel):
+    message_preview: Optional[str] = None
+    sent_at: Optional[str] = None
+    task_id: Optional[str] = None
+
+
+@router.post("/{contact_id}/whatsapp", status_code=201)
+async def log_whatsapp_activity(
+    contact_id: uuid.UUID,
+    body: LogWhatsAppBody,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Log an outbound WhatsApp communication activity on a contact."""
+    from datetime import timezone
+    from app.models.activity import WhatsAppActivity
+    from app.models.audit import AuditLog
+
+    service = ContactService(db)
+    contact = await service.get_contact(contact_id, current_user)
+
+    sent_at_dt = (
+        datetime.fromisoformat(body.sent_at)
+        if body.sent_at
+        else datetime.now(timezone.utc)
+    )
+    task_uuid = uuid.UUID(body.task_id) if body.task_id else None
+
+    wa_act = WhatsAppActivity(
+        contact_id=contact.id,
+        user_id=current_user.id,
+        message_preview=body.message_preview,
+        direction="OUTBOUND",
+        sent_at=sent_at_dt,
+        task_id=task_uuid,
+    )
+    db.add(wa_act)
+
+    audit = AuditLog(
+        actor_id=current_user.id,
+        entity_type="contact",
+        entity_id=contact.id,
+        action="whatsapp.sent",
+        notes=f"WhatsApp message sent to contact",
+    )
+    db.add(audit)
+    await db.commit()
+    await db.refresh(wa_act)
+
+    return {
+        "data": {
+            "id": str(wa_act.id),
+            "contact_id": str(wa_act.contact_id),
+            "user_id": str(wa_act.user_id) if wa_act.user_id else None,
+            "message_preview": wa_act.message_preview,
+            "direction": wa_act.direction,
+            "sent_at": wa_act.sent_at.isoformat(),
+        },
+        "message": "WhatsApp activity recorded successfully.",
+    }

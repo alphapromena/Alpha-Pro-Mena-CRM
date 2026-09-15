@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from app.models.contact import Contact
     from app.models.company import Company
     from app.models.user import User
+    from app.models.follow_up import FollowUp
 
 
 class DemoStage(str, PyEnum):
@@ -50,6 +51,11 @@ class Demo(UUIDMixin, TimestampMixin, Base):
     company_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         Uuid, ForeignKey("companies.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    # Free-text snapshot of the company name at the time the demo was created.
+    # Preserved across company renames and for imported/historical demos.
+    company_name_snapshot: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    # The client-side attendee/contact person name
+    meeting_with: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     owner_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
     )
@@ -80,6 +86,12 @@ class Demo(UUIDMixin, TimestampMixin, Base):
     source_sheet: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     source_row: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
+    # Follow-up conversion tracking (req 9)
+    converted_to_follow_up_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    converted_to_follow_up_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("follow_ups.id", ondelete="SET NULL"), nullable=True
+    )
+
     # Ownership & Audit actor IDs
     created_by_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
@@ -94,6 +106,9 @@ class Demo(UUIDMixin, TimestampMixin, Base):
     owner: Mapped[Optional["User"]] = relationship("User", foreign_keys=[owner_id])
     created_by: Mapped[Optional["User"]] = relationship("User", foreign_keys=[created_by_id])
     updated_by: Mapped[Optional["User"]] = relationship("User", foreign_keys=[updated_by_id])
+    converted_follow_up: Mapped[Optional["FollowUp"]] = relationship(
+        "FollowUp", foreign_keys=[converted_to_follow_up_id]
+    )
 
     __table_args__ = (
         Index("idx_demos_owner_status", "owner_id", "status"),

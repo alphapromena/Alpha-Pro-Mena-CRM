@@ -49,7 +49,7 @@ def _parse_date_range(
 ) -> tuple[datetime, datetime, str]:
     now = datetime.now(timezone.utc)
     today_start = datetime(now.year, now.month, now.day, 0, 0, 0, tzinfo=timezone.utc)
-    
+
     if preset == "today":
         return today_start, now, "today"
     elif preset == "yesterday":
@@ -67,23 +67,34 @@ def _parse_date_range(
         return start_month, now, "this_month"
     elif preset == "all":
         return datetime(2020, 1, 1, tzinfo=timezone.utc), now, "all"
-    elif date_from and date_to:
-        df = datetime.fromisoformat(date_from)
-        if df.tzinfo is None:
-            df = df.replace(tzinfo=timezone.utc)
-        dt = datetime.fromisoformat(date_to)
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
+    elif date_from or date_to:
+        # Parse date_from — default to start of today if omitted
+        if date_from:
+            df = datetime.fromisoformat(date_from)
+            if df.tzinfo is None:
+                df = df.replace(tzinfo=timezone.utc)
+            # If only a date was passed (no time component), treat as start-of-day
+            if "T" not in date_from and " " not in date_from:
+                df = df.replace(hour=0, minute=0, second=0, microsecond=0)
+        else:
+            df = today_start
+
+        # Parse date_to — default to now if omitted
+        if date_to:
+            dt = datetime.fromisoformat(date_to)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            # If only a date was passed (no time component), treat as end-of-day
+            # so records created throughout the day are all included
+            if "T" not in date_to and " " not in date_to:
+                dt = dt.replace(hour=23, minute=59, second=59, microsecond=999999)
+        else:
+            dt = now
+
         return df, dt, "custom"
-    elif date_from:
-        df = datetime.fromisoformat(date_from)
-        if df.tzinfo is None:
-            df = df.replace(tzinfo=timezone.utc)
-        return df, now, "custom"
     else:
-        # Default: this_month
-        start_month = datetime(now.year, now.month, 1, 0, 0, 0, tzinfo=timezone.utc)
-        return start_month, now, "this_month"
+        # Default when no filter is specified: today
+        return today_start, now, "today"
 
 
 def _calc_performance_score(
@@ -237,7 +248,7 @@ async def management_dashboard(
     if user_id:
         email_task_stmt = email_task_stmt.where(Task.assigned_to == uuid.UUID(user_id))
     email_task_count = (await db.execute(email_task_stmt)).scalar_one() or 0
-    total_emails = email_act_count + email_task_count + email_req_calls
+    total_emails = email_act_count + email_task_count
 
     whatsapp_act_stmt = select(func.count(WhatsAppActivity.id)).where(WhatsAppActivity.sent_at.between(df, dt))
     if user_id:
@@ -252,7 +263,9 @@ async def management_dashboard(
     if user_id:
         whatsapp_task_stmt = whatsapp_task_stmt.where(Task.assigned_to == uuid.UUID(user_id))
     whatsapp_task_count = (await db.execute(whatsapp_task_stmt)).scalar_one() or 0
-    total_whatsapp = whatsapp_act_count + whatsapp_task_count + whatsapp_req_calls
+    total_whatsapp = whatsapp_act_count + whatsapp_task_count
+
+    total_communication_activities = total_calls + total_emails + total_whatsapp
 
     # ── 3. Demos Breakdown (Company Level & Status Distribution) ───────────────
     demo_stmt = select(Demo).options(
@@ -499,6 +512,56 @@ async def management_dashboard(
         if row[0]:
             user_recall_map[str(row[0])] = row[1]
 
+    # Pre-fetch all email activities per user
+    user_email_act_map: Dict[str, int] = {}
+    email_acts = (await db.execute(
+        select(EmailActivity.user_id, func.count(EmailActivity.id))
+        .where(EmailActivity.sent_at.between(df, dt))
+        .group_by(EmailActivity.user_id)
+    )).all()
+    for r in email_acts:
+        if r[0]:
+            user_email_act_map[str(r[0])] = r[1]
+
+    user_email_tasks_map: Dict[str, int] = {}
+    email_tasks = (await db.execute(
+        select(Task.assigned_to, func.count(Task.id))
+        .where(
+            Task.type == TaskType.EMAIL,
+            Task.status == TaskStatus.COMPLETED,
+            Task.completed_at.between(df, dt),
+        )
+        .group_by(Task.assigned_to)
+    )).all()
+    for r in email_tasks:
+        if r[0]:
+            user_email_tasks_map[str(r[0])] = r[1]
+
+    # Pre-fetch all whatsapp activities per user
+    user_wa_act_map: Dict[str, int] = {}
+    wa_acts = (await db.execute(
+        select(WhatsAppActivity.user_id, func.count(WhatsAppActivity.id))
+        .where(WhatsAppActivity.sent_at.between(df, dt))
+        .group_by(WhatsAppActivity.user_id)
+    )).all()
+    for r in wa_acts:
+        if r[0]:
+            user_wa_act_map[str(r[0])] = r[1]
+
+    user_wa_tasks_map: Dict[str, int] = {}
+    wa_tasks = (await db.execute(
+        select(Task.assigned_to, func.count(Task.id))
+        .where(
+            Task.type == TaskType.WHATSAPP,
+            Task.status == TaskStatus.COMPLETED,
+            Task.completed_at.between(df, dt),
+        )
+        .group_by(Task.assigned_to)
+    )).all()
+    for r in wa_tasks:
+        if r[0]:
+            user_wa_tasks_map[str(r[0])] = r[1]
+
     # Build detailed per-user summary
     user_breakdown = []
     team_members_map: Dict[str, List[dict]] = {}
@@ -538,8 +601,13 @@ async def management_dashboard(
             + u_outcomes.get("MEETING_REQUESTED", 0)
             + u_outcomes.get("PROPOSAL_REQUESTED", 0)
         )
-        u_emails = u_outcomes.get("EMAIL_REQUESTED", 0)
-        u_whatsapp = u_outcomes.get("WHATSAPP_REQUESTED", 0)
+        u_emails_req = u_outcomes.get("EMAIL_REQUESTED", 0)
+        u_whatsapp_req = u_outcomes.get("WHATSAPP_REQUESTED", 0)
+
+        # Actual persisted email & whatsapp communications
+        u_emails = user_email_act_map.get(uid_str, 0) + user_email_tasks_map.get(uid_str, 0)
+        u_whatsapp = user_wa_act_map.get(uid_str, 0) + user_wa_tasks_map.get(uid_str, 0)
+        u_total_activities = u_total_calls + u_emails + u_whatsapp
         
         u_demos = user_demos_map.get(uid_str, [])
         u_demo_agreed = len(u_demos) + u_outcomes.get("DEMO_REQUESTED", 0)
@@ -615,6 +683,9 @@ async def management_dashboard(
             "interested": u_interested,
             "emails": u_emails,
             "whatsapp": u_whatsapp,
+            "total_activities": u_total_activities,
+            "email_requested_calls": u_emails_req,
+            "whatsapp_requested_calls": u_whatsapp_req,
             "demo_agreed": u_demo_agreed,
             "demo_done": u_demo_done,
             "demo_cancelled": u_demo_cancelled,
@@ -653,6 +724,23 @@ async def management_dashboard(
     # Sort users by performance score descending
     user_breakdown.sort(key=lambda x: (x["performance_score"], x["calls"]), reverse=True)
 
+    user_performance_totals = {
+        "calls": sum(u["calls"] for u in user_breakdown),
+        "answered": sum(u["answered"] for u in user_breakdown),
+        "interested": sum(u["interested"] for u in user_breakdown),
+        "emails": sum(u["emails"] for u in user_breakdown),
+        "whatsapp": sum(u["whatsapp"] for u in user_breakdown),
+        "total_activities": sum(u["total_activities"] for u in user_breakdown),
+        "demos_total": sum(u["demos_total"] for u in user_breakdown),
+        "demos_needs_report": sum(u["demos_needs_report"] for u in user_breakdown),
+        "demos_report_complete": sum(u["demos_report_complete"] for u in user_breakdown),
+        "demo_done": sum(u["demo_done"] for u in user_breakdown),
+        "follow_ups": sum(u["follow_ups"] for u in user_breakdown),
+        "opportunities": sum(u["opportunities"] for u in user_breakdown),
+        "opportunities_won": sum(u["opportunities_won"] for u in user_breakdown),
+        "overdue_tasks": sum(u["overdue_tasks"] for u in user_breakdown),
+    }
+
     # ── 10. Manager & Team Evaluation Summary ─────────────────────────────────
     teams_stmt = select(Team).where(Team.deleted_at.is_(None)).options(selectinload(Team.manager), selectinload(Team.members))
     teams_list = (await db.execute(teams_stmt)).scalars().all()
@@ -666,6 +754,7 @@ async def management_dashboard(
         m_interested = sum(m["interested"] for m in m_members)
         m_emails = sum(m["emails"] for m in m_members)
         m_whatsapp = sum(m["whatsapp"] for m in m_members)
+        m_total_activities = sum(m["total_activities"] for m in m_members)
         m_demos = sum(m["demo_agreed"] for m in m_members)
         m_demos_done = sum(m["demo_done"] for m in m_members)
         m_opps = sum(m["opportunities"] for m in m_members)
@@ -691,6 +780,7 @@ async def management_dashboard(
             "interested": m_interested,
             "emails": m_emails,
             "whatsapp": m_whatsapp,
+            "total_activities": m_total_activities,
             "demos_agreed": m_demos,
             "demos_completed": m_demos_done,
             "opportunities_count": m_opps,
@@ -799,6 +889,7 @@ async def management_dashboard(
                 "unique_contacts": unique_contacts_called,
                 "emails": total_emails,
                 "whatsapp": total_whatsapp,
+                "total_activities": total_communication_activities,
                 "demo_agreed": demos_agreed,
                 "demo_completed": demos_completed,
                 "demo_cancelled": demos_cancelled_stage,
@@ -851,6 +942,7 @@ async def management_dashboard(
                 "demo_to_opportunity": demo_to_opp,
             },
             "user_performance": user_breakdown,
+            "user_performance_totals": user_performance_totals,
             "manager_performance": manager_breakdown,
             "upcoming_demos": upcoming_demos_list,
             "demos_needing_reports": demos_needing_reports_list,

@@ -16,7 +16,7 @@ from app.models.company import Company
 from app.models.user import User
 from app.models.audit import AuditLog
 from app.audit.service import AuditService
-from app.core.exceptions import NotFoundError
+from app.core.exceptions import NotFoundError, ForbiddenError
 
 router = APIRouter(prefix="/opportunities", tags=["Opportunities"])
 
@@ -150,20 +150,30 @@ async def delete_roadmap_step(
 
 
 def _opp_dict(o: Opportunity) -> dict:
+    comp_name = None
+    if o.company and o.company.name:
+        comp_name = o.company.name
+    elif o.company_name_snapshot:
+        comp_name = o.company_name_snapshot
     return {
         "id": str(o.id),
         "title": o.title,
         "contact_id": str(o.contact_id) if o.contact_id else None,
         "contact_name": o.contact.full_name if o.contact else None,
+        "contact_person": o.contact_person,
         "company_id": str(o.company_id) if o.company_id else None,
-        "company_name": o.company.name if o.company else None,
+        "company_name": comp_name,
+        "company_name_snapshot": o.company_name_snapshot,
         "owner_id": str(o.owner_id) if o.owner_id else None,
         "owner_name": o.owner.full_name if o.owner else "Sales Agent",
         "value": o.value or 0.0,
         "stage": o.stage,
         "probability": o.probability,
         "expected_close_at": o.expected_close_at.isoformat() if o.expected_close_at else None,
+        "closed_at": o.closed_at.isoformat() if o.closed_at else None,
         "lost_reason": o.lost_reason,
+        "notes": o.notes,
+        "next_step": o.next_step,
         "created_at": o.created_at.isoformat(),
     }
 
@@ -201,6 +211,26 @@ async def list_opportunities(
     return {"data": [_opp_dict(o) for o in opps], "meta": {"total": total, "page": page, "per_page": per_page}}
 
 
+@router.get("/{opp_id}")
+async def get_opportunity(
+    opp_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get single opportunity detail (authorized)."""
+    stmt = (
+        select(Opportunity)
+        .where(Opportunity.id == opp_id, Opportunity.deleted_at.is_(None))
+        .options(selectinload(Opportunity.contact), selectinload(Opportunity.company), selectinload(Opportunity.owner))
+    )
+    opp = (await db.execute(stmt)).scalar_one_or_none()
+    if not opp:
+        raise NotFoundError("Opportunity not found.")
+    if not current_user.is_manager_or_above and opp.owner_id != current_user.id:
+        raise ForbiddenError("Access denied.")
+    return {"data": _opp_dict(opp)}
+
+
 @router.post("", status_code=201)
 async def create_opportunity(
     body: dict,
@@ -208,15 +238,27 @@ async def create_opportunity(
     db: AsyncSession = Depends(get_db),
 ):
     target_owner = uuid.UUID(body["owner_id"]) if body.get("owner_id") else current_user.id
+
+    # Resolve company_name_snapshot
+    company_name_snapshot = body.get("company_name_snapshot")
+    if body.get("company_id") and not company_name_snapshot:
+        company = await db.get(Company, uuid.UUID(body["company_id"]))
+        if company:
+            company_name_snapshot = company.name
+
     opp = Opportunity(
         title=body["title"],
         contact_id=uuid.UUID(body["contact_id"]) if body.get("contact_id") else None,
         company_id=uuid.UUID(body["company_id"]) if body.get("company_id") else None,
+        company_name_snapshot=company_name_snapshot,
+        contact_person=body.get("contact_person"),
         owner_id=target_owner,
         value=body.get("value"),
         stage=body.get("stage", OpportunityStage.NEW),
         probability=body.get("probability"),
         expected_close_at=datetime.fromisoformat(body["expected_close_at"]) if body.get("expected_close_at") else None,
+        notes=body.get("notes"),
+        next_step=body.get("next_step"),
     )
     db.add(opp)
     await db.flush()
@@ -244,13 +286,17 @@ async def update_opportunity(
         raise NotFoundError("Opportunity not found.")
 
     old_stage = opp.stage
-    for field in ["title", "stage", "value", "probability", "lost_reason"]:
+    for field in ["title", "stage", "value", "probability", "lost_reason", "notes", "next_step", "contact_person"]:
         if field in body and body[field] is not None:
             setattr(opp, field, body[field])
     if "expected_close_at" in body:
         opp.expected_close_at = datetime.fromisoformat(body["expected_close_at"]) if body["expected_close_at"] else None
     if "owner_id" in body and body["owner_id"]:
         opp.owner_id = uuid.UUID(body["owner_id"])
+    if "company_id" in body:
+        opp.company_id = uuid.UUID(body["company_id"]) if body["company_id"] else None
+    if "company_name_snapshot" in body:
+        opp.company_name_snapshot = body["company_name_snapshot"]
     if opp.stage in [OpportunityStage.WON, OpportunityStage.LOST] and not opp.closed_at:
         opp.closed_at = datetime.now(timezone.utc)
 
@@ -271,3 +317,36 @@ async def update_opportunity(
 
     reloaded = (await db.execute(stmt)).scalar_one()
     return {"data": _opp_dict(reloaded)}
+
+
+@router.delete("/{opp_id}", status_code=204)
+async def delete_opportunity(
+    opp_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Soft-delete an Opportunity. Only ADMIN and MANAGER can delete.
+    The record remains in the database with deleted_at set.
+    """
+    if not current_user.is_manager_or_above:
+        raise ForbiddenError("Only managers and above can delete opportunities.")
+
+    stmt = select(Opportunity).where(Opportunity.id == opp_id, Opportunity.deleted_at.is_(None))
+    opp = (await db.execute(stmt)).scalar_one_or_none()
+    if not opp:
+        raise NotFoundError("Opportunity not found.")
+
+    opp.soft_delete()
+    db.add(opp)
+    await db.flush()
+
+    audit = AuditService(db)
+    await audit.log(
+        action="opportunity.deleted",
+        entity_type="opportunity",
+        actor_id=current_user.id,
+        entity_id=opp.id,
+        old_value={"title": opp.title, "stage": opp.stage},
+        new_value={"deleted_at": opp.deleted_at.isoformat()},
+    )

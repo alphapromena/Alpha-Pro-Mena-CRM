@@ -19,6 +19,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ValidationError, AppError
 from app.core.security import normalize_email, normalize_phone
+from app.imports.normalizers import make_import_key
+from app.imports.db_writer import get_or_create_company
 from app.models.contact import Contact, ContactStatus, ContactPriority
 from app.models.company import Company
 from app.models.user import User
@@ -187,7 +189,7 @@ class FileImportService:
         created_contacts: List[Contact] = []
         error_details: List[str] = []
 
-        batch_id = uuid.uuid4().hex[:8]
+        company_cache: Dict[str, uuid.UUID] = {}
 
         for idx, row in enumerate(data_rows, start=1):
             try:
@@ -217,18 +219,26 @@ class FileImportService:
                     error_details.append(f"Row {idx}: Invalid email format ({email_raw})")
                     continue
 
-                # Deterministic Idempotency Key
-                import_key = hashlib.sha256(
-                    f"upload:{filename}:{batch_id}:{idx}".encode()
-                ).hexdigest()
+                # Deterministic Idempotency Key (shared with Contacts & Import pipeline)
+                import_key = make_import_key(
+                    email=norm_email or "",
+                    phone=norm_phone or "",
+                    first_name=first_name or "",
+                    last_name=last_name or "",
+                    company=company_raw or "",
+                )
 
-                # Duplicate Check
+                # Duplicate Check: import_key > email > phone
                 existing_contact = None
-                if norm_email:
+                if import_key:
+                    existing_contact = (
+                        await self.db.execute(select(Contact).where(Contact.import_key == import_key, Contact.deleted_at.is_(None)))
+                    ).scalar_one_or_none()
+                if not existing_contact and norm_email:
                     existing_contact = (
                         await self.db.execute(select(Contact).where(Contact.normalized_email == norm_email, Contact.deleted_at.is_(None)))
                     ).scalar_one_or_none()
-                elif norm_phone:
+                elif not existing_contact and norm_phone:
                     existing_contact = (
                         await self.db.execute(select(Contact).where(Contact.normalized_phone == norm_phone, Contact.deleted_at.is_(None)))
                     ).scalar_one_or_none()
@@ -237,18 +247,10 @@ class FileImportService:
                     rows_duplicate += 1
                     continue
 
-                # Company association or creation
-                company_id = None
-                if company_raw:
-                    comp_stmt = select(Company).where(Company.name.ilike(company_raw), Company.deleted_at.is_(None))
-                    existing_comp = (await self.db.execute(comp_stmt)).scalar_one_or_none()
-                    if existing_comp:
-                        company_id = existing_comp.id
-                    else:
-                        new_comp = Company(name=company_raw, industry=industry, country=country)
-                        self.db.add(new_comp)
-                        await self.db.flush()
-                        company_id = new_comp.id
+                # Canonical company deduplication & creation (shared get_or_create_company)
+                company_id = await get_or_create_company(
+                    self.db, company_raw, company_cache, industry=industry, country=country
+                )
 
                 # Historical attempts from columns like "1st Attempt", "2nd Attempt"
                 att_1 = str(row.get("1st Attempt", "") or row.get("1st Attempts", "") or row.get("Attempt 1", "")).strip() or None

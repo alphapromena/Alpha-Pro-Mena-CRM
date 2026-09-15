@@ -6,7 +6,7 @@ from datetime import datetime
 from enum import Enum as PyEnum
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text
+from sqlalchemy import DateTime, ForeignKey, String, Text
 from sqlalchemy import Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -73,8 +73,20 @@ class Task(UUIDMixin, TimestampMixin, Base):
         Uuid, ForeignKey("automation_rules.id", ondelete="SET NULL"), nullable=True
     )
 
+    # Archive support (req 12): set when user explicitly archives a completed task.
+    # Auto-cleanup job deletes if not restored within 7 full days.
+    archived_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    archived_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+
     # Relationships
     contact: Mapped[Optional["Contact"]] = relationship("Contact", back_populates="tasks")
     company: Mapped[Optional["Company"]] = relationship("Company")
-    assignee: Mapped[Optional["User"]] = relationship("User", foreign_keys=[assigned_to], back_populates="assigned_tasks")
+    assignee: Mapped[Optional["User"]] = relationship(
+        "User", foreign_keys=[assigned_to], back_populates="assigned_tasks"
+    )
     creator: Mapped[Optional["User"]] = relationship("User", foreign_keys=[created_by])
+    archiver: Mapped[Optional["User"]] = relationship("User", foreign_keys=[archived_by])
