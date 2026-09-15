@@ -171,9 +171,20 @@ async def list_companies(
         d["total_contacts"] = len([ct for ct in c.contacts if not ct.deleted_at])
         company_list.append(d)
 
+    # Same reliable metadata as contacts: derived from what was returned, so a
+    # client can page without reasoning about page-size arithmetic.
+    offset = (page - 1) * per_page
     return {
         "data": company_list,
-        "meta": {"total": total, "page": page, "per_page": per_page, "total_pages": -(-total // per_page)},
+        "meta": {
+            "total": total,
+            "page": page,
+            "per_page": per_page,
+            "total_pages": -(-total // per_page),
+            "offset": offset,
+            "returned": len(company_list),
+            "has_more": offset + len(company_list) < total,
+        },
     }
 
 

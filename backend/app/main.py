@@ -149,6 +149,7 @@ def _register_routers(app: FastAPI, prefix: str) -> None:
     from app.integrations.google_sheets.router import router as sheets_router
     from app.integrations.excel_import.router import router as excel_import_router
     from app.jobs.router import router as jobs_router
+    from app.imports.historical_router import router as historical_import_router
 
     for router in [
         users_router, teams_router, contacts_router, companies_router,
@@ -156,6 +157,7 @@ def _register_routers(app: FastAPI, prefix: str) -> None:
         no_answer_router, demos_router, opportunities_router, campaigns_router,
         notifications_router, audit_router, automation_router, search_router,
         reports_router, admin_router, sheets_router, excel_import_router, jobs_router,
+        historical_import_router,
     ]:
         app.include_router(router, prefix=prefix)
 

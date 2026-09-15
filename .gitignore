@@ -75,3 +75,7 @@ api/__pycache__/
 .env*
 !.env.example
 !backend/.env.example
+
+# Workbook analysis reports contain customer names, emails and phone numbers.
+crm_workbook_report.json
+*_workbook_report.json

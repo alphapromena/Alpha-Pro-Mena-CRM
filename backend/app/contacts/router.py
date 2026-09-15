@@ -310,9 +310,24 @@ async def list_contacts(
         include_archived=include_archived, archived_only=archived_only,
         pending_claim_only=pending_claim_only,
     )
+    # offset and has_more are derived from what was actually returned, not from a
+    # page count computed for some other page size. A client that asks for one big
+    # page cannot then compare its page number against total_pages, because the two
+    # are measured in different units; that mismatch marked long lists as fully
+    # loaded while records were still missing.
+    offset = (page - 1) * per_page
+    returned = len(contacts)
     return {
         "data": [_contact_to_dict(c) for c in contacts],
-        "meta": {"total": total, "page": page, "per_page": per_page, "total_pages": -(-total // per_page)},
+        "meta": {
+            "total": total,
+            "page": page,
+            "per_page": per_page,
+            "total_pages": -(-total // per_page),
+            "offset": offset,
+            "returned": returned,
+            "has_more": offset + returned < total,
+        },
     }
 
 

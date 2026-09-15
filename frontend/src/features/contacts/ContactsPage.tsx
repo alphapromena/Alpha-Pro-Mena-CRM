@@ -489,6 +489,13 @@ export const ContactsPage: React.FC = () => {
   // Track whether there are more pages to fetch
   const hasMoreRef = useRef(false);
   const currentPageRef = useRef(1);
+  // How many records are actually in the list. Paging is driven by this rather
+  // than by a page number, because a restore fetches several pages' worth in one
+  // request and a page number then means nothing on its own.
+  const loadedCountRef = useRef(0);
+  // The anchor is read inside timers and callbacks that would otherwise capture a
+  // stale value, so it lives in a ref and is mirrored into session state.
+  const anchorRef = useRef<string | null>(null);
 
   const buildParams = (targetPage: number): Record<string, any> => {
     const params: Record<string, any> = {
@@ -525,13 +532,25 @@ export const ContactsPage: React.FC = () => {
       const res = await api.get<any>('/contacts', params);
       const items = res.data || [];
       const metaTotal = res.meta?.total || 0;
-      const metaPages = res.meta?.total_pages || 1;
+
       setContacts(items);
       setTotal(metaTotal);
-      setTotalPages(metaPages);
-      setPage(pagesToLoad);
-      currentPageRef.current = pagesToLoad;
-      hasMoreRef.current = pagesToLoad < metaPages;
+      setTotalPages(Math.max(1, Math.ceil(metaTotal / PER_PAGE)));
+
+      // Derive position from how many records actually came back. Comparing the
+      // saved page number against total_pages was wrong: total_pages is computed
+      // for the per_page that was requested, and a restore requests a much larger
+      // one. Restoring 41 pages of 50 asked for 2050 records, got total_pages = 2,
+      // concluded 41 >= 2, and marked the list complete while records were still
+      // missing.
+      loadedCountRef.current = items.length;
+      const loadedPages = Math.max(1, Math.ceil(items.length / PER_PAGE));
+      setPage(loadedPages);
+      currentPageRef.current = loadedPages;
+      hasMoreRef.current =
+        typeof res.meta?.has_more === 'boolean'
+          ? res.meta.has_more
+          : items.length < metaTotal;
 
       if (isRestore && (savedState.current?.anchorContactId || (savedState.current?.scrollY && savedState.current.scrollY > 0))) {
         isRestoringScroll.current = true;
@@ -566,12 +585,23 @@ export const ContactsPage: React.FC = () => {
     setIsFetchingMore(true);
     const nextPage = currentPageRef.current + 1;
     try {
-      const res = await api.get<any>('/contacts', buildParams(nextPage));
+      // Ask for the slice that follows what is already on screen, computed from the
+      // loaded count so a restore that fetched an odd number still continues cleanly.
+      const params = buildParams(1);
+      params.per_page = PER_PAGE;
+      params.page = Math.floor(loadedCountRef.current / PER_PAGE) + 1;
+      const res = await api.get<any>('/contacts', params);
       const items = res.data || [];
-      const metaPages = res.meta?.total_pages || 1;
+      const metaTotal = res.meta?.total ?? total;
       setContacts((prev) => [...prev, ...items]);
-      currentPageRef.current = nextPage;
-      hasMoreRef.current = nextPage < metaPages;
+      loadedCountRef.current += items.length;
+      currentPageRef.current = Math.max(1, Math.ceil(loadedCountRef.current / PER_PAGE));
+      hasMoreRef.current =
+        typeof res.meta?.has_more === 'boolean'
+          ? res.meta.has_more
+          : loadedCountRef.current < metaTotal;
+      // A page that comes back empty means the end, whatever the metadata claims.
+      if (items.length === 0) hasMoreRef.current = false;
 
       writeSessionState(user?.id, {
         activeView,
@@ -583,9 +613,9 @@ export const ContactsPage: React.FC = () => {
         positionFilter,
         sortBy,
         sortDir,
-        loadedPages: nextPage,
+        loadedPages: currentPageRef.current,
         scrollY: window.scrollY,
-        anchorContactId: savedState.current?.anchorContactId,
+        anchorContactId: anchorRef.current ?? savedState.current?.anchorContactId ?? null,
       });
     } catch (err) {
       console.error('Error fetching more contacts', err);

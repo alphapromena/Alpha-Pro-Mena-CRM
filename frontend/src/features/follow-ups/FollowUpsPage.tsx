@@ -25,6 +25,7 @@ import {
   Check,
 } from 'lucide-react';
 import { useTranslation } from '../../i18n';
+import { HistoricalImportDropZone } from '../../components/imports/HistoricalImportDropZone';
 
 interface RoadmapStep {
   id: string;
@@ -201,6 +202,10 @@ export const FollowUpsPage: React.FC = () => {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)' }}>
+      {/* Drag-and-drop import of historical records. Previews first; the
+          server writes nothing until the user confirms. */}
+      <HistoricalImportDropZone kind="FOLLOW_UP"  />
+
       {/* ── Header ──────────────────────────────────────────────────────── */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 'var(--space-4)' }}>
         <div>

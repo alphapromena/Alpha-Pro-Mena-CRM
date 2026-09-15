@@ -28,6 +28,7 @@ import {
   Upload,
 } from 'lucide-react';
 import { useTranslation } from '../../i18n';
+import { HistoricalImportDropZone } from '../../components/imports/HistoricalImportDropZone';
 
 interface DemoCounts {
   ALL: number;
@@ -407,6 +408,10 @@ amin@alphapromena.com,2025-10-20,Amin,"Overview of lead distribution module",POS
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)' }}>
+      {/* Drag-and-drop import of historical records. Previews first; the
+          server writes nothing until the user confirms. */}
+      <HistoricalImportDropZone kind="DEMO" onImported={() => fetchDemos()} />
+
       {/* ── Top Header ─────────────────────────────────────────────────── */}
       <div
         style={{
