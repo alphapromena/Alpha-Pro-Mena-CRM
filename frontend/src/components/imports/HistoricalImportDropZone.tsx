@@ -78,6 +78,8 @@ export const HistoricalImportDropZone: React.FC<Props> = ({ kind = 'ALL', onImpo
     try {
       const body = new FormData();
       body.append('file', file);
+      // A CSV carries no sheet name, so the page says which kind it is.
+      if (kind !== 'ALL') body.append('kind', kind);
       const res = await fetch(`${API_BASE}/imports/historical/preview`, {
         method: 'POST',
         credentials: 'include',
@@ -106,6 +108,7 @@ export const HistoricalImportDropZone: React.FC<Props> = ({ kind = 'ALL', onImpo
       body.append('file', fileRef.current);
       // Sending the previewed checksum back is what ties the write to what was reviewed.
       body.append('confirm_checksum', preview.source_file_checksum);
+      if (kind !== 'ALL') body.append('kind', kind);
       const res = await fetch(`${API_BASE}/imports/historical/commit`, {
         method: 'POST',
         credentials: 'include',
@@ -124,11 +127,29 @@ export const HistoricalImportDropZone: React.FC<Props> = ({ kind = 'ALL', onImpo
     }
   }, [preview, onImported]);
 
+  /** Reject the wrong file type here, so the user gets the reason instantly. */
+  const accept = (file: File): boolean => {
+    const name = file.name.toLowerCase();
+    if (name.endsWith('.xlsx') || name.endsWith('.xlsm') || name.endsWith('.csv')) return true;
+    setError(
+      name.endsWith('.xls')
+        ? (isRTL
+            ? 'صيغة .xls القديمة غير مدعومة. افتح الملف بالإكسل واحفظه بصيغة .xlsx ثم أعد المحاولة.'
+            : 'The old .xls format is not supported. Open it in Excel, save as .xlsx, then try again.')
+        : (isRTL
+            ? 'صيغة غير مدعومة. المقبول: .xlsx أو .csv'
+            : 'Unsupported file type. Accepted: .xlsx or .csv')
+    );
+    return false;
+  };
+
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
     const file = e.dataTransfer.files?.[0];
-    if (file) runPreview(file);
+    if (!file) return;
+    setError(null);
+    if (accept(file)) runPreview(file);
   };
 
   /** Rows the user could not import, as a CSV they can hand back to whoever owns the sheet. */
@@ -183,9 +204,14 @@ export const HistoricalImportDropZone: React.FC<Props> = ({ kind = 'ALL', onImpo
           <input
             ref={inputRef}
             type="file"
-            accept=".xlsx,.xlsm"
+            accept=".xlsx,.xlsm,.csv"
             hidden
-            onChange={(e) => { const f = e.target.files?.[0]; if (f) runPreview(f); }}
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (!f) return;
+              setError(null);
+              if (accept(f)) runPreview(f);
+            }}
           />
           <UploadCloud size={28} style={{ color: 'var(--color-primary)', marginBottom: 8 }} />
           <div style={{ fontWeight: 700, fontSize: '14px' }}>
@@ -195,6 +221,13 @@ export const HistoricalImportDropZone: React.FC<Props> = ({ kind = 'ALL', onImpo
             {isRTL
               ? 'يقرأ أوراق Demo و Ghaida fu و Amin fu. لن يُكتب أي شيء قبل أن تراجع وتؤكد.'
               : 'Reads the Demo, Ghaida fu and Amin fu sheets. Nothing is written until you review and confirm.'}
+          </div>
+          <div
+            className="text-xs"
+            style={{ marginTop: 6, color: 'var(--neutral-500)', fontWeight: 600 }}
+          >
+            {isRTL ? 'الصيغ المقبولة: .xlsx أو .csv — صيغة .xls القديمة غير مدعومة'
+                   : 'Accepted: .xlsx or .csv. The old .xls format is not supported.'}
           </div>
         </div>
       )}

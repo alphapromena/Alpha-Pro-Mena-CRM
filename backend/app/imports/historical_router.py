@@ -33,6 +33,8 @@ from app.database import get_db
 from app.imports.historical_activity import (
     ACTIVITY_DEMO,
     ACTIVITY_FOLLOWUP,
+    DEMO_SHEET,
+    FOLLOWUP_SHEETS,
     ActivityRow,
     dedupe_key,
     parse_workbook,
@@ -56,21 +58,90 @@ CANONICAL_OWNERS = {
 }
 
 
-async def _read_workbook(file: UploadFile) -> tuple[Any, str]:
+async def _read_upload(file: UploadFile, kind: Optional[str]) -> tuple[Any, str, str]:
+    """
+    Accept a workbook or a single CSV sheet.
+
+    Returns (workbook_like, checksum, source_label). A CSV has no worksheets, so
+    it cannot say whether it holds demos or follow-ups; the caller supplies that
+    from the page the drop happened on.
+    """
     name = (file.filename or "").lower()
-    if not name.endswith((".xlsx", ".xlsm")):
-        raise ValidationError("Only .xlsx workbooks are supported for historical import.")
     content = await file.read()
     if not content:
         raise ValidationError("The uploaded file is empty.")
     if len(content) > MAX_BYTES:
         raise ValidationError("File is larger than 50 MB.")
     checksum = hashlib.sha256(content).hexdigest()
-    try:
-        wb = openpyxl.load_workbook(io.BytesIO(content), data_only=True)
-    except Exception as exc:
-        raise ValidationError(f"Could not read the workbook: {exc}")
-    return wb, checksum
+
+    if name.endswith((".xlsx", ".xlsm")):
+        try:
+            return openpyxl.load_workbook(io.BytesIO(content), data_only=True), checksum, "workbook"
+        except Exception as exc:
+            raise ValidationError(f"Could not read the workbook: {exc}")
+
+    if name.endswith(".csv"):
+        if kind not in (ACTIVITY_DEMO, ACTIVITY_FOLLOWUP):
+            raise ValidationError(
+                "A CSV has no sheet names, so it cannot say whether it holds demos or "
+                "follow-ups. Drop it on the Demos or Follow-ups page, or upload the "
+                ".xlsx workbook instead."
+            )
+        return _csv_as_sheet(content, kind), checksum, "csv"
+
+    if name.endswith(".xls"):
+        raise ValidationError(
+            "The old .xls format is not supported. Open it in Excel and use "
+            "File > Save As > Excel Workbook (.xlsx), then try again."
+        )
+
+    raise ValidationError(
+        "Unsupported file type. Upload an .xlsx workbook, or a .csv laid out like the "
+        "activity sheets: name, company, position, phone, email, salesperson, then the "
+        "outcome columns."
+    )
+
+
+class _CsvWorkbook:
+    """
+    Minimal stand-in so a CSV can go through the same parser as a worksheet.
+
+    The parser only ever asks for sheetnames and iter_rows, so nothing more is
+    needed and the CSV path cannot drift from the workbook path.
+    """
+
+    def __init__(self, sheet_name: str, rows: List[tuple]) -> None:
+        self.sheetnames = [sheet_name]
+        self._sheets = {sheet_name: _CsvSheet(rows)}
+
+    def __getitem__(self, name: str):
+        return self._sheets[name]
+
+
+class _CsvSheet:
+    def __init__(self, rows: List[tuple]) -> None:
+        self._rows = rows
+
+    def iter_rows(self, values_only: bool = True):
+        return iter(self._rows)
+
+
+def _csv_as_sheet(content: bytes, kind: str) -> _CsvWorkbook:
+    import csv as _csv
+
+    text = content.decode("utf-8-sig", errors="replace")
+    rows = [tuple(r) for r in _csv.reader(io.StringIO(text))]
+    if not rows:
+        raise ValidationError("The CSV has no rows.")
+
+    # A header row is optional. Drop it only when the first cell clearly labels a
+    # column rather than naming a person, so a headerless export keeps every row.
+    first = (rows[0][0] or "").strip().lower() if rows[0] else ""
+    if first in {"name", "contact", "contact name", "full name"}:
+        rows = rows[1:]
+
+    sheet_name = DEMO_SHEET if kind == ACTIVITY_DEMO else FOLLOWUP_SHEETS[0]
+    return _CsvWorkbook(sheet_name, rows)
 
 
 async def _resolve(db: AsyncSession, rows: List[ActivityRow], checksum: str) -> Dict[str, Any]:
@@ -206,11 +277,12 @@ def _as_json(entry: Dict[str, Any]) -> Dict[str, Any]:
 @router.post("/preview")
 async def preview_historical_import(
     file: UploadFile = File(...),
+    kind: Optional[str] = Form(None),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Parse the workbook and report what would happen. Writes nothing."""
-    wb, checksum = await _read_workbook(file)
+    """Parse the upload and report what would happen. Writes nothing."""
+    wb, checksum, _ = await _read_upload(file, kind)
     parsed = parse_workbook(wb, checksum)
     if not parsed["rows"]:
         raise ValidationError(
@@ -237,6 +309,7 @@ async def preview_historical_import(
 async def commit_historical_import(
     file: UploadFile = File(...),
     confirm_checksum: str = Form(...),
+    kind: Optional[str] = Form(None),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -246,7 +319,7 @@ async def commit_historical_import(
     confirm_checksum must match the file, which is what stops a commit landing on
     a different workbook than the one reviewed in the preview.
     """
-    wb, checksum = await _read_workbook(file)
+    wb, checksum, _ = await _read_upload(file, kind)
     if confirm_checksum.strip() != checksum:
         raise ValidationError(
             "This file does not match the one that was previewed. Preview it again before importing."
