@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../../lib/apiClient';
 import { useAuthStore } from '../../store/authStore';
+import { isManagerOrAbove } from '../../lib/permissions';
 import { Task } from '../../types';
 import { Badge } from '../../components/ui/Badge';
 import { Modal } from '../../components/ui/Modal';
@@ -75,8 +76,11 @@ export const TasksPage: React.FC = () => {
     }
   };
 
-  // Fetch Users for Filter & Assignment
+  const hasManagerPrivileges = isManagerOrAbove(user?.role);
+
+  // Fetch Users for Filter & Assignment (managers and team leads only)
   useEffect(() => {
+    if (!hasManagerPrivileges) return;
     const fetchUsers = async () => {
       try {
         const res = await api.get<any>('/users');
@@ -86,7 +90,7 @@ export const TasksPage: React.FC = () => {
       }
     };
     fetchUsers();
-  }, []);
+  }, [hasManagerPrivileges]);
 
   const fetchTasks = async () => {
     setIsLoading(true);
@@ -306,20 +310,22 @@ export const TasksPage: React.FC = () => {
           alignItems: 'center',
         }}
       >
-        {/* User Filter */}
-        <select
-          className="form-select text-xs"
-          style={{ width: '180px' }}
-          value={assignedUserFilter}
-          onChange={(e) => setAssignedUserFilter(e.target.value)}
-        >
-          <option value="">{isRTL ? "جميع الموظفين" : "All Assigned Reps"}</option>
-          {usersList.map((u) => (
-            <option key={u.id} value={u.id}>
-              👤 {u.full_name} ({u.role})
-            </option>
-          ))}
-        </select>
+        {/* Assigned User Filter for Managers/Team Leads */}
+        {hasManagerPrivileges && (
+          <select
+            className="form-select text-xs"
+            style={{ width: '180px' }}
+            value={assignedUserFilter}
+            onChange={(e) => setAssignedUserFilter(e.target.value)}
+          >
+            <option value="">{isRTL ? "جميع الموظفين" : "All Assigned Reps"}</option>
+            {usersList.map((u) => (
+              <option key={u.id} value={u.id}>
+                👤 {u.full_name} ({u.role})
+              </option>
+            ))}
+          </select>
+        )}
 
         {/* Priority Filter */}
         <select

@@ -134,21 +134,31 @@ async def list_tasks(
     if not current_user.is_manager_or_above:
         stmt = stmt.where(Task.assigned_to == current_user.id)
     elif target_user_filter:
-        stmt = stmt.where(Task.assigned_to == uuid.UUID(target_user_filter))
+        try:
+            stmt = stmt.where(Task.assigned_to == uuid.UUID(target_user_filter))
+        except Exception:
+            pass
 
     if status:
         stmt = stmt.where(Task.status == status)
     if type:
         stmt = stmt.where(Task.type == type)
     if priority:
-        stmt = stmt.where(Task.priority == priority.upper())
+        stmt = stmt.where(Task.priority == priority.strip().upper())
     if contact_id:
-        stmt = stmt.where(Task.contact_id == uuid.UUID(contact_id))
+        try:
+            stmt = stmt.where(Task.contact_id == uuid.UUID(contact_id))
+        except Exception:
+            pass
     if company_id:
-        stmt = stmt.where(Task.company_id == uuid.UUID(company_id))
+        try:
+            stmt = stmt.where(Task.company_id == uuid.UUID(company_id))
+        except Exception:
+            pass
     if overdue_only:
+        now = datetime.now(timezone.utc)
         stmt = stmt.where(
-            Task.due_at < datetime.now(timezone.utc),
+            Task.due_at < now,
             Task.status.in_([TaskStatus.OPEN, TaskStatus.IN_PROGRESS, TaskStatus.OVERDUE]),
         )
 
@@ -165,7 +175,7 @@ async def list_tasks(
             )
         )
 
-    total = (await db.execute(select(func.count()).select_from(stmt.subquery()))).scalar_one()
+    total = (await db.execute(select(func.count()).select_from(stmt.order_by(None).subquery()))).scalar_one()
     stmt = stmt.order_by(Task.due_at.asc().nullslast(), Task.created_at.desc()).offset((page - 1) * per_page).limit(per_page)
     tasks = (await db.execute(stmt)).scalars().all()
 
@@ -178,17 +188,44 @@ async def create_task(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    due = datetime.fromisoformat(body.due_at) if body.due_at else None
-    assigned_target = uuid.UUID(body.assigned_to) if body.assigned_to else current_user.id
+    due = None
+    if body.due_at:
+        try:
+            clean_due = body.due_at.replace("Z", "+00:00") if body.due_at.endswith("Z") else body.due_at
+            due = datetime.fromisoformat(clean_due)
+        except Exception:
+            due = None
+
+    assigned_target = current_user.id
+    if body.assigned_to:
+        try:
+            assigned_target = uuid.UUID(body.assigned_to)
+        except Exception:
+            assigned_target = current_user.id
+
+    contact_uuid = None
+    if body.contact_id:
+        try:
+            contact_uuid = uuid.UUID(body.contact_id)
+        except Exception:
+            contact_uuid = None
+
+    company_uuid = None
+    if body.company_id:
+        try:
+            company_uuid = uuid.UUID(body.company_id)
+        except Exception:
+            company_uuid = None
+
     task = Task(
         title=body.title,
         description=body.description,
-        contact_id=uuid.UUID(body.contact_id) if body.contact_id else None,
-        company_id=uuid.UUID(body.company_id) if body.company_id else None,
+        contact_id=contact_uuid,
+        company_id=company_uuid,
         assigned_to=assigned_target,
         created_by=current_user.id,
-        type=body.type,
-        priority=body.priority,
+        type=body.type.upper() if body.type else "CALL",
+        priority=body.priority.upper() if body.priority else "MEDIUM",
         status=TaskStatus.OPEN,
         due_at=due,
     )

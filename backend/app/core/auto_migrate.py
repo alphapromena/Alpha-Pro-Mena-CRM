@@ -19,14 +19,19 @@ logger = structlog.get_logger(__name__)
 
 # The Alembic revision whose schema the DDL in this module reproduces.
 # Keep in sync with backend/alembic/versions/ when new revisions are added.
-AUTO_MIGRATE_REVISION = "c5a1f8e23901"
+AUTO_MIGRATE_REVISION = "a9f3e2d1c4b7"
 
 # Revisions strictly OLDER than AUTO_MIGRATE_REVISION. A database stamped with
 # one of these really has been brought up to AUTO_MIGRATE_REVISION by the DDL
 # below, so advancing its stamp is correct. Any other value -- in particular a
 # revision newer than AUTO_MIGRATE_REVISION -- is left untouched so a database
 # that has moved ahead is never stamped backwards.
-SUPERSEDED_REVISIONS = ("b6d7df55ae73",)
+SUPERSEDED_REVISIONS = (
+    "b6d7df55ae73",
+    "c5a1f8e23901",
+    "a4d2c8b19e77",
+    "c7e91f4a2b38",
+)
 
 
 def _get_bootstrap_password() -> str:
@@ -254,11 +259,19 @@ async def _migrate_postgresql(session: AsyncSession) -> None:
             ALTER TABLE demos ADD COLUMN IF NOT EXISTS source_row        INTEGER;
             ALTER TABLE demos ADD COLUMN IF NOT EXISTS created_by_id    UUID REFERENCES users(id) ON DELETE SET NULL;
             ALTER TABLE demos ADD COLUMN IF NOT EXISTS updated_by_id    UUID REFERENCES users(id) ON DELETE SET NULL;
+            ALTER TABLE demos ADD COLUMN IF NOT EXISTS company_name_snapshot VARCHAR(500);
+            ALTER TABLE demos ADD COLUMN IF NOT EXISTS meeting_with VARCHAR(255);
+            ALTER TABLE demos ADD COLUMN IF NOT EXISTS converted_to_follow_up_at TIMESTAMPTZ;
+            ALTER TABLE demos ADD COLUMN IF NOT EXISTS converted_to_follow_up_id UUID;
+            ALTER TABLE demos ADD COLUMN IF NOT EXISTS import_key VARCHAR(64);
+            ALTER TABLE demos ADD COLUMN IF NOT EXISTS source_file_checksum VARCHAR(64);
             CREATE INDEX IF NOT EXISTS ix_demos_status          ON demos (status);
             CREATE INDEX IF NOT EXISTS ix_demos_report_status   ON demos (report_status);
             CREATE INDEX IF NOT EXISTS ix_demos_is_historical   ON demos (is_historical);
             CREATE INDEX IF NOT EXISTS ix_demos_created_by_id   ON demos (created_by_id);
             CREATE INDEX IF NOT EXISTS idx_demos_owner_status   ON demos (owner_id, status);
+            CREATE INDEX IF NOT EXISTS idx_demos_source_file    ON demos (source_file_checksum);
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_demos_import_key ON demos (import_key) WHERE import_key IS NOT NULL;
         END IF;
 
         -- 3. follow_ups table
@@ -267,10 +280,35 @@ async def _migrate_postgresql(session: AsyncSession) -> None:
             ALTER TABLE follow_ups ADD COLUMN IF NOT EXISTS next_step    TEXT;
             ALTER TABLE follow_ups ADD COLUMN IF NOT EXISTS source_sheet VARCHAR(50);
             ALTER TABLE follow_ups ADD COLUMN IF NOT EXISTS source_row   INTEGER;
+            ALTER TABLE follow_ups ADD COLUMN IF NOT EXISTS company_name_snapshot VARCHAR(500);
+            ALTER TABLE follow_ups ADD COLUMN IF NOT EXISTS meeting_with VARCHAR(255);
+            ALTER TABLE follow_ups ADD COLUMN IF NOT EXISTS demo_id UUID REFERENCES demos(id) ON DELETE SET NULL;
+            ALTER TABLE follow_ups ADD COLUMN IF NOT EXISTS import_key VARCHAR(64);
+            ALTER TABLE follow_ups ADD COLUMN IF NOT EXISTS source_file_checksum VARCHAR(64);
+            ALTER TABLE follow_ups ALTER COLUMN contact_id DROP NOT NULL;
+            ALTER TABLE follow_ups ALTER COLUMN due_at DROP NOT NULL;
             CREATE INDEX IF NOT EXISTS ix_follow_ups_company_id ON follow_ups (company_id);
+            CREATE INDEX IF NOT EXISTS idx_follow_ups_demo_id   ON follow_ups (demo_id);
+            CREATE INDEX IF NOT EXISTS idx_follow_ups_source_file ON follow_ups (source_file_checksum);
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_follow_ups_import_key ON follow_ups (import_key) WHERE import_key IS NOT NULL;
         END IF;
 
-        -- 4. leads_archive table
+        -- 4. tasks table (archive support - req 12)
+        IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'tasks') THEN
+            ALTER TABLE tasks ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;
+            ALTER TABLE tasks ADD COLUMN IF NOT EXISTS archived_by UUID REFERENCES users(id) ON DELETE SET NULL;
+            CREATE INDEX IF NOT EXISTS idx_tasks_archived_at ON tasks (archived_at);
+        END IF;
+
+        -- 5. opportunities table (enrichment & company snapshot)
+        IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'opportunities') THEN
+            ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS company_name_snapshot VARCHAR(500);
+            ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS contact_person VARCHAR(255);
+            ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS notes TEXT;
+            ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS next_step TEXT;
+        END IF;
+
+        -- 6. leads_archive table
         CREATE TABLE IF NOT EXISTS leads_archive (
             id UUID PRIMARY KEY,
             batch_id VARCHAR(100) NOT NULL,
@@ -290,6 +328,22 @@ async def _migrate_postgresql(session: AsyncSession) -> None:
         CREATE INDEX IF NOT EXISTS idx_leads_archive_phone ON leads_archive (phone);
         CREATE INDEX IF NOT EXISTS idx_leads_archive_email ON leads_archive (email);
         CREATE INDEX IF NOT EXISTS idx_leads_archive_salesperson ON leads_archive (salesperson);
+    END $$;
+    """))
+
+    # Add foreign key constraint for converted_to_follow_up_id after both tables are verified
+    await session.execute(text("""
+    DO $$
+    BEGIN
+        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'demos' AND column_name = 'converted_to_follow_up_id') THEN
+            IF NOT EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE constraint_name = 'fk_demos_converted_to_follow_up') THEN
+                ALTER TABLE demos ADD CONSTRAINT fk_demos_converted_to_follow_up
+                FOREIGN KEY (converted_to_follow_up_id) REFERENCES follow_ups(id) ON DELETE SET NULL;
+            END IF;
+        END IF;
+    EXCEPTION
+        WHEN OTHERS THEN
+            NULL; -- Safely ignore if constraint already exists or cannot be created
     END $$;
     """))
 
@@ -411,6 +465,18 @@ async def _migrate_sqlite(session: AsyncSession) -> None:
         await session.execute(text("ALTER TABLE demos ADD COLUMN source_sheet VARCHAR(50)"))
     if "source_row" not in demo_cols:
         await session.execute(text("ALTER TABLE demos ADD COLUMN source_row INTEGER"))
+    if "company_name_snapshot" not in demo_cols:
+        await session.execute(text("ALTER TABLE demos ADD COLUMN company_name_snapshot VARCHAR(500)"))
+    if "meeting_with" not in demo_cols:
+        await session.execute(text("ALTER TABLE demos ADD COLUMN meeting_with VARCHAR(255)"))
+    if "converted_to_follow_up_at" not in demo_cols:
+        await session.execute(text("ALTER TABLE demos ADD COLUMN converted_to_follow_up_at DATETIME"))
+    if "converted_to_follow_up_id" not in demo_cols:
+        await session.execute(text("ALTER TABLE demos ADD COLUMN converted_to_follow_up_id CHAR(32)"))
+    if "import_key" not in demo_cols:
+        await session.execute(text("ALTER TABLE demos ADD COLUMN import_key VARCHAR(64)"))
+    if "source_file_checksum" not in demo_cols:
+        await session.execute(text("ALTER TABLE demos ADD COLUMN source_file_checksum VARCHAR(64)"))
 
     # Follow-ups columns
     res_fu = await session.execute(text("PRAGMA table_info(follow_ups)"))
@@ -423,6 +489,36 @@ async def _migrate_sqlite(session: AsyncSession) -> None:
         await session.execute(text("ALTER TABLE follow_ups ADD COLUMN source_sheet VARCHAR(50)"))
     if "source_row" not in fu_cols:
         await session.execute(text("ALTER TABLE follow_ups ADD COLUMN source_row INTEGER"))
+    if "company_name_snapshot" not in fu_cols:
+        await session.execute(text("ALTER TABLE follow_ups ADD COLUMN company_name_snapshot VARCHAR(500)"))
+    if "meeting_with" not in fu_cols:
+        await session.execute(text("ALTER TABLE follow_ups ADD COLUMN meeting_with VARCHAR(255)"))
+    if "demo_id" not in fu_cols:
+        await session.execute(text("ALTER TABLE follow_ups ADD COLUMN demo_id CHAR(32)"))
+    if "import_key" not in fu_cols:
+        await session.execute(text("ALTER TABLE follow_ups ADD COLUMN import_key VARCHAR(64)"))
+    if "source_file_checksum" not in fu_cols:
+        await session.execute(text("ALTER TABLE follow_ups ADD COLUMN source_file_checksum VARCHAR(64)"))
+
+    # Tasks columns (req 12 archive support)
+    res_tasks = await session.execute(text("PRAGMA table_info(tasks)"))
+    task_cols = {row[1] for row in res_tasks.fetchall()}
+    if "archived_at" not in task_cols:
+        await session.execute(text("ALTER TABLE tasks ADD COLUMN archived_at DATETIME"))
+    if "archived_by" not in task_cols:
+        await session.execute(text("ALTER TABLE tasks ADD COLUMN archived_by CHAR(32)"))
+
+    # Opportunities columns
+    res_opps = await session.execute(text("PRAGMA table_info(opportunities)"))
+    opp_cols = {row[1] for row in res_opps.fetchall()}
+    if "company_name_snapshot" not in opp_cols:
+        await session.execute(text("ALTER TABLE opportunities ADD COLUMN company_name_snapshot VARCHAR(500)"))
+    if "contact_person" not in opp_cols:
+        await session.execute(text("ALTER TABLE opportunities ADD COLUMN contact_person VARCHAR(255)"))
+    if "notes" not in opp_cols:
+        await session.execute(text("ALTER TABLE opportunities ADD COLUMN notes TEXT"))
+    if "next_step" not in opp_cols:
+        await session.execute(text("ALTER TABLE opportunities ADD COLUMN next_step TEXT"))
 
     # Leads archive table
     await session.execute(text("""

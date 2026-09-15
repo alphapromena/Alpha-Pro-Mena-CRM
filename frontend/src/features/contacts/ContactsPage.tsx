@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../../lib/apiClient';
 import { useAuthStore } from '../../store/authStore';
+import { isManagerOrAbove } from '../../lib/permissions';
 import { Contact, ContactStatus } from '../../types';
 import { Badge } from '../../components/ui/Badge';
 import { Modal } from '../../components/ui/Modal';
@@ -526,8 +527,11 @@ export const ContactsPage: React.FC = () => {
     notes: '',
   });
 
+  const hasManagerPrivileges = isManagerOrAbove(user?.role);
+
   // Fetch Users for Filter and Reassignment
   useEffect(() => {
+    if (!hasManagerPrivileges) return;
     const fetchUsers = async () => {
       try {
         const res = await api.get<any>('/users');
@@ -537,7 +541,7 @@ export const ContactsPage: React.FC = () => {
       }
     };
     fetchUsers();
-  }, []);
+  }, [hasManagerPrivileges]);
 
   const PER_PAGE = 100;
   const [isFetchingMore, setIsFetchingMore] = useState(false);
@@ -617,7 +621,7 @@ export const ContactsPage: React.FC = () => {
           let restored = false;
           if (anchorId) {
             const row = document.getElementById(`contact-row-${anchorId}`) ||
-                        document.querySelector(`[data-contact-id="${anchorId}"]`);
+              document.querySelector(`[data-contact-id="${anchorId}"]`);
             if (row) {
               row.scrollIntoView({ block: 'center' });
               restored = true;
@@ -706,7 +710,7 @@ export const ContactsPage: React.FC = () => {
       scrollY: 0,
       anchorContactId: null,
     });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeView, ownerFilter, outcomeFilter, countryFilter, industryFilter, positionFilter, sortBy, sortDir]);
 
   // Set up IntersectionObserver on the sentinel div
@@ -722,7 +726,7 @@ export const ContactsPage: React.FC = () => {
     );
     if (sentinelRef.current) observerRef.current.observe(sentinelRef.current);
     return () => observerRef.current?.disconnect();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isFetchingMore, contacts.length]);
 
   // Track scroll and visible anchor contact in viewport (debounced)
@@ -1109,24 +1113,26 @@ export const ContactsPage: React.FC = () => {
           </div>
         </form>
 
-        {/* Sales Owner Filter */}
-        <select
-          className="form-select text-xs"
-          style={{ width: '160px', height: '32px' }}
-          value={ownerFilter}
-          onChange={(e) => {
-            setOwnerFilter(e.target.value);
-            setPage(1);
-          }}
-        >
-          <option value="">{isRTL ? "جميع الموظفين" : "All Sales Reps"}</option>
-          <option value="unassigned">{isRTL ? "غير مخصص" : "Unassigned"}</option>
-          {usersList.map((u) => (
-            <option key={u.id} value={u.id}>
-              👤 {u.first_name || u.full_name}
-            </option>
-          ))}
-        </select>
+        {/* Sales Owner Filter (Manager/Team Lead only) */}
+        {hasManagerPrivileges && (
+          <select
+            className="form-select text-xs"
+            style={{ width: '160px', height: '32px' }}
+            value={ownerFilter}
+            onChange={(e) => {
+              setOwnerFilter(e.target.value);
+              setPage(1);
+            }}
+          >
+            <option value="">{isRTL ? "جميع الموظفين" : "All Sales Reps"}</option>
+            <option value="unassigned">{isRTL ? "غير مخصص" : "Unassigned"}</option>
+            {usersList.map((u) => (
+              <option key={u.id} value={u.id}>
+                👤 {u.first_name || u.full_name}
+              </option>
+            ))}
+          </select>
+        )}
 
         {/* Outcome Filter */}
         <select

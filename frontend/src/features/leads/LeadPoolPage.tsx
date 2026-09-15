@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../../lib/apiClient';
+import { useAuthStore } from '../../store/authStore';
+import { isManagerOrAbove } from '../../lib/permissions';
 import { Contact, User } from '../../types';
 import { Badge } from '../../components/ui/Badge';
 import { Modal } from '../../components/ui/Modal';
@@ -57,10 +59,15 @@ interface SyncRun {
 }
 
 export const LeadPoolPage: React.FC = () => {
+  const { user } = useAuthStore();
   const { t, isRTL } = useTranslation();
 
+  const hasManagerPrivileges = isManagerOrAbove(user?.role);
+
   // Active Main Tab
-  const [activeTab, setActiveTab] = useState<'pool' | 'upload' | 'sheets' | 'my_pool'>('pool');
+  const [activeTab, setActiveTab] = useState<'pool' | 'upload' | 'sheets' | 'my_pool'>(() =>
+    hasManagerPrivileges ? 'pool' : 'my_pool'
+  );
 
   // Personal Pool (PENDING_CLAIM leads assigned to current user)
   const [personalPool, setPersonalPool] = useState<Contact[]>([]);
@@ -197,10 +204,15 @@ export const LeadPoolPage: React.FC = () => {
   };
 
   useEffect(() => {
-    fetchLeadsAndUsers();
-    fetchGoogleSheetsData();
+    if (hasManagerPrivileges) {
+      fetchLeadsAndUsers();
+      fetchGoogleSheetsData();
+    } else {
+      setIsLoading(false);
+      setActiveTab('my_pool');
+    }
     fetchPersonalPool();
-  }, []);
+  }, [hasManagerPrivileges]);
 
   const handleSelectAll = (checked: boolean) => {
     if (checked) {
