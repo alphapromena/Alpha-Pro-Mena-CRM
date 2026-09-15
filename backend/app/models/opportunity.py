@@ -40,6 +40,10 @@ class Opportunity(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     company_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         Uuid, ForeignKey("companies.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    # Free-text snapshot of the company name (req 11) — preserved for imported/historical records
+    company_name_snapshot: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    # Client-side contact person name snapshot
+    contact_person: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     owner_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
     )
@@ -49,12 +53,18 @@ class Opportunity(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     expected_close_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     closed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     lost_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    next_step: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # Relationships
     contact: Mapped[Optional["Contact"]] = relationship("Contact", back_populates="opportunities")
     company: Mapped[Optional["Company"]] = relationship("Company", back_populates="opportunities")
     owner: Mapped[Optional["User"]] = relationship("User", foreign_keys=[owner_id])
-    roadmap_steps: Mapped[List["OpportunityRoadmapStep"]] = relationship("OpportunityRoadmapStep", back_populates="opportunity", order_by="OpportunityRoadmapStep.step_order.asc()")
+    roadmap_steps: Mapped[List["OpportunityRoadmapStep"]] = relationship(
+        "OpportunityRoadmapStep",
+        back_populates="opportunity",
+        order_by="OpportunityRoadmapStep.step_order.asc()",
+    )
 
 
 class OpportunityRoadmapStep(UUIDMixin, TimestampMixin, Base):
@@ -72,10 +82,10 @@ class OpportunityRoadmapStep(UUIDMixin, TimestampMixin, Base):
     user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
     )
-    step_type: Mapped[str] = mapped_column(String(100), nullable=False)  # e.g. "First Call", "Email Sent", "Demo Agreed", "Demo Completed", "Proposal Sent", "Latest Status"
+    step_type: Mapped[str] = mapped_column(String(100), nullable=False)
     step_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    status: Mapped[str] = mapped_column(String(30), nullable=False, default="COMPLETED")  # COMPLETED | IN_PROGRESS | PENDING
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="COMPLETED")
     step_order: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
     # Relationships

@@ -16,6 +16,7 @@ from app.core.exceptions import ForbiddenError, NotFoundError, UnauthorizedError
 from app.jobs.google_sheets_sync import run_scheduled_sheets_sync
 from app.jobs.overdue_tasks import check_overdue_tasks
 from app.jobs.recall_reminder import check_recall_reminders
+from app.jobs.task_archive_cleanup import cleanup_expired_archived_tasks
 
 logger = structlog.get_logger(__name__)
 settings = get_settings()
@@ -26,6 +27,7 @@ JOBS: Dict[str, Callable[[], Awaitable[None]]] = {
     "overdue-tasks": check_overdue_tasks,
     "recall-reminders": check_recall_reminders,
     "sheets-sync": run_scheduled_sheets_sync,
+    "task-archive-cleanup": cleanup_expired_archived_tasks,
 }
 
 

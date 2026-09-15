@@ -21,10 +21,10 @@ from datetime import datetime, timezone
 from typing import Dict, FrozenSet, List, Optional, Tuple
 
 import structlog
-from sqlalchemy import func as sa_func, select
+from sqlalchemy import func as sa_func, select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.imports.normalizers import normalize_email, normalize_phone
+from app.imports.normalizers import normalize_email, normalize_phone, normalize_company_name
 from app.imports.reconciler import (
     KNOWN_SALESPERSON_NAMES,
     LEGACY_SALESPERSON_NAMES,
@@ -159,31 +159,54 @@ async def get_or_create_company(
     db: AsyncSession,
     name: str,
     cache: Dict[str, _uuid_mod.UUID],
+    report: Optional[ImportReport] = None,
+    industry: Optional[str] = None,
+    country: Optional[str] = None,
 ) -> Optional[_uuid_mod.UUID]:
-    """Return a company UUID, creating the record only if truly absent.
+    """Return a company UUID, creating the record only if truly absent (req 7).
 
-    Uses case-insensitive exact match (ilike) before inserting.
-    Returns None for blank names.
+    Normalizes company names safely using Unicode NFC, trimmed/collapsed whitespace,
+    case-insensitive matching, and conservative punctuation normalization.
+    Preserves the best original display name.
+    Reuses existing canonical Company when a safe match exists.
+    Updates report statistics.
     """
-    if not name or not name.strip():
+    display_name, key = normalize_company_name(name)
+    if not display_name or not key:
         return None
-    name = name.strip()
-    key  = name.lower()
+
+    if report is not None:
+        report.distinct_company_names.add(key)
+
     if key in cache:
         return cache[key]
 
+    # Look up by case-insensitive name or exact display_name
     result = await db.execute(
         select(Company).where(
-            Company.name.ilike(name),
+            or_(
+                sa_func.lower(Company.name) == key,
+                Company.name.ilike(display_name),
+            ),
             Company.deleted_at.is_(None),
         )
     )
     co = result.scalar_one_or_none()
-    if not co:
-        co = Company(name=name)
+    if co:
+        if report is not None:
+            report.total_existing_companies_matched += 1
+    else:
+        co = Company(
+            name=display_name,
+            industry=industry,
+            country=country,
+            status="ACTIVE",
+        )
         db.add(co)
         await db.flush()
-        logger.debug("import.company_created", name=name)
+        if report is not None:
+            report.total_new_companies_created += 1
+        logger.debug("import.company_created", name=display_name)
 
     cache[key] = co.id
     return co.id
@@ -375,7 +398,7 @@ async def run_import(
     if company_names:
         for cname in company_names:
             try:
-                await get_or_create_company(db, cname, company_cache)
+                await get_or_create_company(db, cname, company_cache, report=report)
             except Exception as exc:
                 logger.warning("import.company_preseed_error", name=cname, error=str(exc))
         await db.flush()
@@ -384,7 +407,7 @@ async def run_import(
     for i, (row, existing_id) in enumerate(to_upsert):
         try:
             owner_id   = _resolve_owner(row.salesperson, sp_map, row)
-            company_id = await get_or_create_company(db, row.company, company_cache)
+            company_id = await get_or_create_company(db, row.company, company_cache, report=report, country=row.country)
 
             async with db.begin_nested():
                 action, next_order = await upsert_contact(

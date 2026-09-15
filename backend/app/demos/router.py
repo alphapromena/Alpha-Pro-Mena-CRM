@@ -31,6 +31,8 @@ class DemoCreateBody(BaseModel):
     contact_id: str
     company_id: Optional[str] = None
     company_name: Optional[str] = None
+    company_name_snapshot: Optional[str] = None  # free-text company name (req 10)
+    meeting_with: Optional[str] = None           # client attendee/contact person (req 10)
     owner_id: Optional[str] = None
     status: str = DemoStatus.PENDING
     stage: Optional[str] = None
@@ -51,6 +53,10 @@ class DemoCreateBody(BaseModel):
 
 class DemoUpdateBody(BaseModel):
     owner_id: Optional[str] = None
+    contact_id: Optional[str] = None
+    company_id: Optional[str] = None
+    company_name_snapshot: Optional[str] = None  # req 10
+    meeting_with: Optional[str] = None           # req 10
     status: Optional[str] = None
     stage: Optional[str] = None
     scheduled_at: Optional[str] = None
@@ -78,6 +84,10 @@ class DemoReportSubmitBody(BaseModel):
     next_step: Optional[str] = None
     next_step_due_date: Optional[str] = None
     notes: Optional[str] = None
+    company_name_snapshot: Optional[str] = None
+    meeting_with: Optional[str] = None
+    scheduled_at: Optional[str] = None
+    owner_id: Optional[str] = None
 
 
 def _validate_demo_report_rules(status: str, summary: Optional[str], reason: Optional[str], next_step: Optional[str]) -> tuple[bool, str]:
@@ -117,11 +127,13 @@ def _validate_demo_report_rules(status: str, summary: Optional[str], reason: Opt
 
 def _demo_dict(d: Demo) -> dict:
     c_name = d.contact.full_name if d.contact else None
-    comp_name = (
-        d.company.name
-        if d.company
-        else (d.contact.company.name if (d.contact and d.contact.company) else None)
-    )
+    comp_name = None
+    if d.company and d.company.name:
+        comp_name = d.company.name
+    elif d.company_name_snapshot:
+        comp_name = d.company_name_snapshot
+    elif d.contact and d.contact.company:
+        comp_name = d.contact.company.name
     return {
         "id": str(d.id),
         "contact_id": str(d.contact_id),
@@ -130,6 +142,8 @@ def _demo_dict(d: Demo) -> dict:
         "contact_email": d.contact.email if d.contact else None,
         "company_id": str(d.company_id) if d.company_id else None,
         "company_name": comp_name,
+        "company_name_snapshot": d.company_name_snapshot,
+        "meeting_with": d.meeting_with,
         "owner_id": str(d.owner_id) if d.owner_id else None,
         "owner_name": d.owner.full_name if d.owner else "Unassigned",
         "stage": d.stage,
@@ -150,6 +164,8 @@ def _demo_dict(d: Demo) -> dict:
         "is_historical": d.is_historical,
         "historical_source": d.historical_source,
         "historical_date": d.historical_date.isoformat() if d.historical_date else None,
+        "converted_to_follow_up_id": str(d.converted_to_follow_up_id) if d.converted_to_follow_up_id else None,
+        "converted_to_follow_up_at": d.converted_to_follow_up_at.isoformat() if d.converted_to_follow_up_at else None,
         "created_by_id": str(d.created_by_id) if d.created_by_id else None,
         "updated_by_id": str(d.updated_by_id) if d.updated_by_id else None,
         "created_at": d.created_at.isoformat(),
@@ -527,6 +543,14 @@ async def update_demo(
         demo.next_step_due_date = datetime.fromisoformat(body.next_step_due_date.replace("Z", "+00:00"))
     if body.owner_id:
         demo.owner_id = uuid.UUID(body.owner_id)
+    if body.company_name_snapshot is not None:
+        demo.company_name_snapshot = body.company_name_snapshot.strip() if body.company_name_snapshot else None
+    if body.meeting_with is not None:
+        demo.meeting_with = body.meeting_with.strip() if body.meeting_with else None
+    if body.contact_id is not None:
+        demo.contact_id = uuid.UUID(body.contact_id) if body.contact_id else None
+    if body.company_id is not None:
+        demo.company_id = uuid.UUID(body.company_id) if body.company_id else None
 
     # Validate report rules if status changed or report completed
     if demo.summary and demo.summary.strip():
@@ -748,4 +772,135 @@ async def import_historical_demos(
         "preview": False,
         "imported_count": inserted_count,
         "message": f"Successfully imported {inserted_count} historical demos.",
+    }
+
+
+class DemoConvertToFollowUpBody(BaseModel):
+    """
+    Body for POST /demos/{demo_id}/convert-to-follow-up (req 9/10).
+    All fields are optional — the endpoint pre-fills from the Demo where possible.
+    """
+    due_at: Optional[str] = None
+    meeting_with: Optional[str] = None
+    notes: Optional[str] = None
+    next_step: Optional[str] = None
+    type: str = "DEMO"
+    user_id: Optional[str] = None
+
+
+@router.post("/{demo_id}/convert-to-follow-up", status_code=201)
+async def convert_demo_to_follow_up(
+    demo_id: uuid.UUID,
+    body: DemoConvertToFollowUpBody,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Move a Demo into the Follow-up queue. (req 9, req 10)
+
+    - Resolves company and contact from the Demo.
+    - Pre-fills company_name_snapshot, meeting_with from the Demo.
+    - Prevents duplicate: if a follow-up already exists for this demo_id it is returned instead.
+    - Marks the Demo with converted_to_follow_up_id / converted_to_follow_up_at.
+    - Writes an audit log entry on the demo.
+    """
+    from app.models.follow_up import FollowUp
+
+    # Load the demo
+    stmt = (
+        select(Demo)
+        .where(Demo.id == demo_id)
+        .options(
+            selectinload(Demo.contact).selectinload(Contact.company),
+            selectinload(Demo.company),
+            selectinload(Demo.owner),
+        )
+    )
+    demo = (await db.execute(stmt)).scalar_one_or_none()
+    if not demo:
+        raise NotFoundError("Demo not found.")
+
+    # RBAC
+    if not current_user.is_manager_or_above and str(demo.owner_id) != str(current_user.id):
+        raise ForbiddenError("Access denied.")
+
+    # Prevent duplicate follow-up for the same demo
+    if demo.converted_to_follow_up_id:
+        existing_fu = (
+            await db.execute(
+                select(FollowUp).where(FollowUp.id == demo.converted_to_follow_up_id)
+            )
+        ).scalar_one_or_none()
+        if existing_fu:
+            return {
+                "data": {
+                    "follow_up_id": str(existing_fu.id),
+                    "created": False,
+                    "message": "A follow-up already exists for this demo.",
+                }
+            }
+
+    # Derive best company name snapshot
+    company_name_snapshot = (
+        demo.company_name_snapshot
+        or (demo.company.name if demo.company else None)
+        or (demo.contact.company.name if (demo.contact and demo.contact.company) else None)
+    )
+    # Derive meeting_with
+    meeting_with = body.meeting_with or demo.meeting_with or (demo.contact.full_name if demo.contact else None)
+    # Determine owner
+    target_user = uuid.UUID(body.user_id) if body.user_id else (demo.owner_id or current_user.id)
+    # Due at — fall back to demo next_step_due_date if no override
+    due_at = None
+    if body.due_at:
+        due_at = datetime.fromisoformat(body.due_at)
+    elif demo.next_step_due_date:
+        due_at = demo.next_step_due_date
+
+    fu = FollowUp(
+        contact_id=demo.contact_id,
+        company_id=demo.company_id,
+        company_name_snapshot=company_name_snapshot,
+        meeting_with=meeting_with,
+        user_id=target_user,
+        demo_id=demo.id,
+        type=body.type,
+        status="PENDING",
+        due_at=due_at,
+        notes=body.notes or demo.notes,
+        next_step=body.next_step or demo.next_step,
+    )
+    db.add(fu)
+    await db.flush()
+
+    # Mark the demo as converted
+    demo.converted_to_follow_up_id = fu.id
+    demo.converted_to_follow_up_at = datetime.now(timezone.utc)
+    demo.updated_by_id = current_user.id
+    db.add(demo)
+    await db.flush()
+
+    audit = AuditService(db)
+    await audit.log(
+        action="demo.converted_to_follow_up",
+        entity_type="demo",
+        actor_id=current_user.id,
+        entity_id=demo.id,
+        new_value={
+            "follow_up_id": str(fu.id),
+            "company_name_snapshot": company_name_snapshot,
+            "meeting_with": meeting_with,
+        },
+    )
+
+    return {
+        "data": {
+            "follow_up_id": str(fu.id),
+            "created": True,
+            "demo_id": str(demo.id),
+            "company_name_snapshot": company_name_snapshot,
+            "meeting_with": meeting_with,
+            "type": fu.type,
+            "due_at": fu.due_at.isoformat() if fu.due_at else None,
+        }
     }

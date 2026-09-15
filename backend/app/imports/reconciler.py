@@ -73,6 +73,11 @@ class ImportReport:
     total_skipped: int = 0
     total_errors: int = 0
     total_conflicts: int = 0
+    # Company metrics (req 7)
+    distinct_company_names: Set[str] = field(default_factory=set)
+    total_existing_companies_matched: int = 0
+    total_new_companies_created: int = 0
+    total_ambiguous_companies: int = 0
 
     per_sheet: Dict[str, SheetStats] = field(default_factory=dict)
     awaiting_review_rows: List[Dict] = field(default_factory=list)
@@ -82,17 +87,24 @@ class ImportReport:
     def to_dict(self) -> dict:
         return {
             "summary": {
-                "total_rows_read":       self.total_rows_read,
-                "total_invalid":         self.total_invalid,
-                "total_intra_duplicates": self.total_intra_duplicates,
-                "total_db_matched":      self.total_db_matched,
-                "total_new":             self.total_new,
-                "total_awaiting_review": self.total_awaiting_review,
-                "total_inserted":        self.total_inserted,
-                "total_updated":         self.total_updated,
-                "total_skipped":         self.total_skipped,
-                "total_errors":          self.total_errors,
-                "total_conflicts":       self.total_conflicts,
+                "source_rows":                  self.total_rows_read,
+                "total_rows_read":              self.total_rows_read,
+                "valid_contacts":               self.total_inserted + self.total_updated,
+                "invalid_rows":                 self.total_invalid,
+                "distinct_company_names":       len(self.distinct_company_names),
+                "existing_companies_matched":   self.total_existing_companies_matched,
+                "new_companies_created":        self.total_new_companies_created,
+                "ambiguous_companies":          self.total_ambiguous_companies,
+                "duplicate_rows_skipped":       self.total_intra_duplicates + self.total_skipped,
+                "total_intra_duplicates":        self.total_intra_duplicates,
+                "total_db_matched":             self.total_db_matched,
+                "total_new":                    self.total_new,
+                "total_awaiting_review":        self.total_awaiting_review,
+                "total_inserted":               self.total_inserted,
+                "total_updated":                self.total_updated,
+                "total_skipped":                self.total_skipped,
+                "total_errors":                 self.total_errors,
+                "total_conflicts":              self.total_conflicts,
             },
             "per_sheet": {
                 k: {

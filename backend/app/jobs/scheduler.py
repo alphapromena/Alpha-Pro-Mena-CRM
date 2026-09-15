@@ -9,6 +9,7 @@ from app.config import get_settings
 from app.jobs.overdue_tasks import check_overdue_tasks
 from app.jobs.recall_reminder import check_recall_reminders
 from app.jobs.google_sheets_sync import run_scheduled_sheets_sync
+from app.jobs.task_archive_cleanup import cleanup_expired_archived_tasks
 
 logger = structlog.get_logger(__name__)
 settings = get_settings()
@@ -42,6 +43,15 @@ async def start_scheduler():
         run_scheduled_sheets_sync,
         trigger=IntervalTrigger(minutes=settings.job_google_sheets_sync_minutes),
         id="run_scheduled_sheets_sync",
+        replace_existing=True,
+    )
+
+    # 4. Archived Task Cleanup (every 24 hrs) — hard-deletes tasks archived >= 7 days ago
+    from apscheduler.triggers.cron import CronTrigger
+    scheduler.add_job(
+        cleanup_expired_archived_tasks,
+        trigger=CronTrigger(hour=2, minute=0, timezone="UTC"),  # 02:00 UTC daily
+        id="cleanup_expired_archived_tasks",
         replace_existing=True,
     )
 

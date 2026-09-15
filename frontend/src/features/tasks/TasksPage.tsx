@@ -21,6 +21,8 @@ import {
   Edit3,
   User,
   ArrowRight,
+  Archive,
+  RotateCcw,
 } from 'lucide-react';
 import { useTranslation } from '../../i18n';
 
@@ -33,7 +35,7 @@ export const TasksPage: React.FC = () => {
   const [usersList, setUsersList] = useState<any[]>([]);
 
   // Filters State
-  const [category, setCategory] = useState<'ALL' | 'COMMUNICATION' | 'CUSTOMER_ACTION' | 'INTERNAL_ASSIGNED'>('ALL');
+  const [category, setCategory] = useState<'ALL' | 'COMMUNICATION' | 'CUSTOMER_ACTION' | 'INTERNAL_ASSIGNED' | 'ARCHIVED'>('ALL');
   const [assignedUserFilter, setAssignedUserFilter] = useState('');
   const [priorityFilter, setPriorityFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
@@ -92,7 +94,11 @@ export const TasksPage: React.FC = () => {
       const params: Record<string, any> = {
         per_page: 100,
       };
-      if (category !== 'ALL') params.category = category;
+      if (category === 'ARCHIVED') {
+        params.archived = true;
+      } else if (category !== 'ALL') {
+        params.category = category;
+      }
       if (assignedUserFilter) params.assigned_to = assignedUserFilter;
       if (priorityFilter) params.priority = priorityFilter;
       if (statusFilter) params.status = statusFilter;
@@ -118,6 +124,24 @@ export const TasksPage: React.FC = () => {
       await fetchTasks();
     } catch (e) {
       console.error('Failed to complete task', e);
+    }
+  };
+
+  const handleArchive = async (taskId: string) => {
+    try {
+      await api.post(`/tasks/${taskId}/archive`);
+      await fetchTasks();
+    } catch (e: any) {
+      alert(e.message || 'Failed to archive task');
+    }
+  };
+
+  const handleRestore = async (taskId: string) => {
+    try {
+      await api.post(`/tasks/${taskId}/restore`);
+      await fetchTasks();
+    } catch (e: any) {
+      alert(e.message || 'Failed to restore task');
     }
   };
 
@@ -260,6 +284,14 @@ export const TasksPage: React.FC = () => {
         >
           <UserCheck size={15} />
           <span>{isRTL ? "3. المهام الداخلية المسندة" : "3. Assigned Internal Tasks"}</span>
+        </button>
+        <button
+          onClick={() => setCategory('ARCHIVED')}
+          className={`btn ${category === 'ARCHIVED' ? 'btn-accent' : 'btn-secondary'} btn-sm`}
+          style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+        >
+          <Archive size={15} />
+          <span>{isRTL ? "4. الأرشيف (Archived)" : "4. Archived Tasks"}</span>
         </button>
       </div>
 
@@ -463,8 +495,8 @@ export const TasksPage: React.FC = () => {
                       </span>
                     </td>
                     <td>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                        {t.status !== 'COMPLETED' && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                        {t.status !== 'COMPLETED' && !t.archived_at && (
                           <button
                             onClick={() => handleComplete(t.id)}
                             className="btn btn-secondary btn-sm"
@@ -473,6 +505,42 @@ export const TasksPage: React.FC = () => {
                             <CheckCircle2 size={14} style={{ color: 'var(--color-success)' }} />
                             <span>{isRTL ? "إكمال" : "Done"}</span>
                           </button>
+                        )}
+                        {t.status === 'COMPLETED' && !t.archived_at && (
+                          <button
+                            onClick={() => handleArchive(t.id)}
+                            className="btn btn-secondary btn-sm"
+                            style={{ display: 'flex', alignItems: 'center', gap: '4px' }}
+                            title={isRTL ? "أرشفة المهمة المكتملة" : "Archive completed task"}
+                          >
+                            <Archive size={14} style={{ color: 'var(--neutral-600)' }} />
+                            <span>{isRTL ? "أرشفة" : "Archive"}</span>
+                          </button>
+                        )}
+                        {t.archived_at && (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <button
+                              onClick={() => handleRestore(t.id)}
+                              className="btn btn-secondary btn-sm"
+                              style={{ display: 'flex', alignItems: 'center', gap: '4px' }}
+                              title={isRTL ? "استعادة من الأرشيف" : "Restore task"}
+                            >
+                              <RotateCcw size={14} style={{ color: 'var(--color-primary)' }} />
+                              <span>{isRTL ? "استعادة" : "Restore"}</span>
+                            </button>
+                            <span
+                              className="text-xs text-muted font-mono"
+                              title={isRTL ? "يتم الحذف التلقائي بعد 7 أيام من الأرشفة" : "Auto-deletes 7 days after archiving"}
+                              style={{ fontSize: '11px', whiteSpace: 'nowrap' }}
+                            >
+                              {(() => {
+                                const archTime = new Date(t.archived_at).getTime();
+                                const daysElapsed = Math.floor((Date.now() - archTime) / (24 * 3600 * 1000));
+                                const daysLeft = Math.max(0, 7 - daysElapsed);
+                                return isRTL ? `حذف خلال ${daysLeft}ي` : `${daysLeft}d left`;
+                              })()}
+                            </span>
+                          </div>
                         )}
                       </div>
                     </td>

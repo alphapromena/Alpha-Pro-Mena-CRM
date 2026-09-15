@@ -65,6 +65,9 @@ interface UserPerformanceRow {
   interested: number;
   emails: number;
   whatsapp: number;
+  total_activities?: number;
+  email_requested_calls?: number;
+  whatsapp_requested_calls?: number;
   demo_agreed: number;
   demo_done: number;
   demo_cancelled: number;
@@ -98,10 +101,29 @@ export const DashboardPage: React.FC = () => {
   const { user } = useAuthStore();
   const { t, isRTL } = useTranslation();
 
-  // Filters State — default to live operations ('today')
-  const [preset, setPreset] = useState<string>('today');
-  const [dateFrom, setDateFrom] = useState<string>('');
-  const [dateTo, setDateTo] = useState<string>('');
+  // Filters State — default to today's date; preset 'today' sends server-side today
+  // We read sessionStorage so the user's manual selection survives navigation within the session.
+  const getTodayLocalDate = (): string => {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, '0');
+    const d = String(now.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  };
+
+  const SESSION_KEY_DATE_FROM = 'dashboard_dateFrom';
+  const SESSION_KEY_DATE_TO   = 'dashboard_dateTo';
+  const SESSION_KEY_PRESET    = 'dashboard_preset';
+
+  const [preset, setPreset] = useState<string>(
+    () => sessionStorage.getItem(SESSION_KEY_PRESET) ?? 'today'
+  );
+  const [dateFrom, setDateFrom] = useState<string>(
+    () => sessionStorage.getItem(SESSION_KEY_DATE_FROM) ?? getTodayLocalDate()
+  );
+  const [dateTo, setDateTo] = useState<string>(
+    () => sessionStorage.getItem(SESSION_KEY_DATE_TO) ?? getTodayLocalDate()
+  );
   const [selectedUserId, setSelectedUserId] = useState<string>('');
   const [selectedTeamId, setSelectedTeamId] = useState<string>('');
   const [selectedCountry, setSelectedCountry] = useState<string>('');
@@ -139,9 +161,14 @@ export const DashboardPage: React.FC = () => {
     setIsRefreshing(true);
     try {
       const params: Record<string, string> = {};
-      if (preset) params.preset = preset;
-      if (dateFrom) params.date_from = dateFrom;
-      if (dateTo) params.date_to = dateTo;
+      // If a preset is active, use that; otherwise send custom date range
+      if (preset) {
+        params.preset = preset;
+        // Do NOT send date_from/date_to when a preset is active
+      } else {
+        if (dateFrom) params.date_from = dateFrom;
+        if (dateTo) params.date_to = dateTo;
+      }
       if (selectedUserId) params.user_id = selectedUserId;
       if (selectedTeamId) params.team_id = selectedTeamId;
       if (selectedCountry) params.country = selectedCountry;
@@ -158,6 +185,17 @@ export const DashboardPage: React.FC = () => {
       setIsRefreshing(false);
     }
   };
+
+  // Persist filter state to sessionStorage whenever it changes
+  useEffect(() => {
+    sessionStorage.setItem(SESSION_KEY_PRESET, preset);
+  }, [preset]);
+  useEffect(() => {
+    sessionStorage.setItem(SESSION_KEY_DATE_FROM, dateFrom);
+  }, [dateFrom]);
+  useEffect(() => {
+    sessionStorage.setItem(SESSION_KEY_DATE_TO, dateTo);
+  }, [dateTo]);
 
   useEffect(() => {
     fetchDashboard();
@@ -192,10 +230,31 @@ export const DashboardPage: React.FC = () => {
   const conversions = data?.conversion_metrics || {};
   const userPerformance: UserPerformanceRow[] = data?.user_performance || [];
 
+  const perfTotals = data?.user_performance_totals || {
+    calls: userPerformance.reduce((acc, u) => acc + (u.calls || 0), 0),
+    answered: userPerformance.reduce((acc, u) => acc + (u.answered || 0), 0),
+    whatsapp: userPerformance.reduce((acc, u) => acc + (u.whatsapp || 0), 0),
+    emails: userPerformance.reduce((acc, u) => acc + (u.emails || 0), 0),
+    total_activities: userPerformance.reduce((acc, u) => acc + (u.total_activities ?? ((u.calls || 0) + (u.emails || 0) + (u.whatsapp || 0))), 0),
+    demos_total: userPerformance.reduce((acc, u) => acc + (u.demos_total ?? u.demo_agreed ?? 0), 0),
+    demos_needs_report: userPerformance.reduce((acc, u) => acc + (u.demos_needs_report || 0), 0),
+    demos_report_complete: userPerformance.reduce((acc, u) => acc + (u.demos_report_complete || 0), 0),
+    demo_done: userPerformance.reduce((acc, u) => acc + (u.demo_done || 0), 0),
+    follow_ups: userPerformance.reduce((acc, u) => acc + (u.follow_ups || 0), 0),
+    opportunities: userPerformance.reduce((acc, u) => acc + (u.opportunities || 0), 0),
+    opportunities_won: userPerformance.reduce((acc, u) => acc + (u.opportunities_won || 0), 0),
+    overdue_tasks: userPerformance.reduce((acc, u) => acc + (u.overdue_tasks || 0), 0),
+  };
+  const totalDemosAll = perfTotals.demos_total || 1;
+  const totalsReportRate = perfTotals.demos_total > 0
+    ? Math.round(((perfTotals.demos_report_complete || 0) / totalDemosAll) * 100)
+    : 100;
+
   const resetFilters = () => {
-    setPreset('this_month');
-    setDateFrom('');
-    setDateTo('');
+    const today = getTodayLocalDate();
+    setPreset('today');
+    setDateFrom(today);
+    setDateTo(today);
     setSelectedUserId('');
     setSelectedTeamId('');
     setSelectedCountry('');
@@ -418,9 +477,15 @@ export const DashboardPage: React.FC = () => {
             <input
               type="date"
               value={dateFrom}
+              max={dateTo || undefined}
               onChange={(e) => {
-                setDateFrom(e.target.value);
+                const newFrom = e.target.value;
+                setDateFrom(newFrom);
                 setPreset('');
+                // If dateTo would be before new dateFrom, snap dateTo to dateFrom
+                if (dateTo && newFrom && dateTo < newFrom) {
+                  setDateTo(newFrom);
+                }
               }}
               className="input text-xs w-full"
             />
@@ -433,6 +498,7 @@ export const DashboardPage: React.FC = () => {
             <input
               type="date"
               value={dateTo}
+              min={dateFrom || undefined}
               onChange={(e) => {
                 setDateTo(e.target.value);
                 setPreset('');
@@ -1040,29 +1106,56 @@ export const DashboardPage: React.FC = () => {
         {/* Tab 1: Sales Rep Performance Table */}
         {activePerfTab === 'users' ? (
           <div className="table-container" style={{ overflowX: 'auto' }}>
-            <table className="table">
+            <table className="table" style={{ width: '100%', minWidth: '1080px' }}>
               <thead>
                 <tr>
-                  <th>{isRTL ? "الموظف" : "Sales User"}</th>
-                  <th>{isRTL ? "المكالمات" : "Calls"}</th>
-                  <th>{isRTL ? "إيميل" : "Emails"}</th>
-                  <th>{isRTL ? "واتساب" : "WhatsApp"}</th>
-                  <th>{isRTL ? "إجمالي العروض" : "Total Demos"}</th>
-                  <th>{isRTL ? "تحتاج تقرير" : "Needs Report"}</th>
-                  <th>{isRTL ? "نسبة إكمال التقرير" : "Report Done %"}</th>
-                  <th>{isRTL ? "عروض مكتملة" : "Demo Done"}</th>
-                  <th>{isRTL ? "متابعات" : "Follow-ups"}</th>
-                  <th>{isRTL ? "الفرص" : "Opps"}</th>
-                  <th>{isRTL ? "مهام متأخرة" : "Overdue"}</th>
-                  <th>{isRTL ? "النتيجة الإجمالية" : "Score"}</th>
+                  <th title={isRTL ? "اسم مندوب المبيعات المعتمد" : "Authorized sales team representative"}>
+                    {isRTL ? "الموظف" : "Sales User"}
+                  </th>
+                  <th title={isRTL ? "إجمالي محاولات الاتصال المسجلة في الفترة المحددة" : "Total outbound call attempts logged in selected period"}>
+                    {isRTL ? "المكالمات" : "Calls"}
+                  </th>
+                  <th title={isRTL ? "رسائل واتساب المباشرة والمهام المكتملة" : "Direct WhatsApp messages and completed tasks in period"}>
+                    {isRTL ? "واتساب" : "WhatsApp"}
+                  </th>
+                  <th title={isRTL ? "رسائل البريد الإلكتروني المرسلة والمهام المكتملة" : "Direct emails sent and completed tasks in period"}>
+                    {isRTL ? "إيميل" : "Emails"}
+                  </th>
+                  <th title={isRTL ? "إجمالي الأنشطة التواصلية المتتبعة (مكالمات + واتساب + بريد)" : "Total tracked communication activities (Calls + WhatsApp + Emails)"} style={{ color: 'var(--color-primary)' }}>
+                    {isRTL ? "إجمالي التواصل" : "Total Tracked"}
+                  </th>
+                  <th title={isRTL ? "إجمالي العروض المتفق عليها أو المجدولة" : "Total demos agreed or scheduled in period"}>
+                    {isRTL ? "إجمالي العروض" : "Total Demos"}
+                  </th>
+                  <th title={isRTL ? "عروض تم إجراؤها وبانتظار كتابة التقرير" : "Completed demos awaiting meeting report"}>
+                    {isRTL ? "تحتاج تقرير" : "Needs Report"}
+                  </th>
+                  <th title={isRTL ? "نسبة إكمال تقارير العروض التوضيحية" : "Percentage of demos with completed report"}>
+                    {isRTL ? "نسبة التقرير" : "Report %"}
+                  </th>
+                  <th title={isRTL ? "عروض تجريبية تم تقديمها بنجاح" : "Demos conducted successfully"}>
+                    {isRTL ? "عروض مكتملة" : "Demo Done"}
+                  </th>
+                  <th title={isRTL ? "سجلات المتابعة المسجلة في الفترة" : "Follow-ups created in period"}>
+                    {isRTL ? "متابعات" : "Follow-ups"}
+                  </th>
+                  <th title={isRTL ? "الفرص البيعية المنشأة والرابحة" : "Opportunities created and won in period"}>
+                    {isRTL ? "الفرص" : "Opps"}
+                  </th>
+                  <th title={isRTL ? "المهام المعلقة المتجاوزة لوقت الاستحقاق" : "Open overdue tasks"}>
+                    {isRTL ? "متأخرة" : "Overdue"}
+                  </th>
+                  <th title={isRTL ? "تقييم الأداء الشامل الموضوعي (0 - 100) بناء على النشاط والتحويل والانضباط" : "Objective performance score (0-100) based on outreach volume, conversions, and SLA"}>
+                    {isRTL ? "التقييم" : "Score"}
+                  </th>
                   <th>{isRTL ? "الإجراء" : "Action"}</th>
                 </tr>
               </thead>
               <tbody>
                 {userPerformance.length === 0 ? (
                   <tr>
-                    <td colSpan={12} style={{ textAlign: 'center', padding: 'var(--space-6)' }} className="text-muted">
-                      {isRTL ? "لا توجد بيانات للفترة المحددة" : "No performance records found for the selected period"}
+                    <td colSpan={14} style={{ textAlign: 'center', padding: 'var(--space-6)' }} className="text-muted">
+                      {isRTL ? "لا توجد بيانات للأداء التشغيلي للفترة المحددة" : "No operational performance records found for the selected period"}
                     </td>
                   </tr>
                 ) : (
@@ -1083,6 +1176,8 @@ export const DashboardPage: React.FC = () => {
                       badgeVariant = 'error';
                       scoreLabel = isRTL ? 'يحتاج مراجعة' : 'Needs Review';
                     }
+
+                    const rowTotalAct = row.total_activities ?? ((row.calls || 0) + (row.emails || 0) + (row.whatsapp || 0));
 
                     return (
                       <tr
@@ -1124,8 +1219,13 @@ export const DashboardPage: React.FC = () => {
                           <span className="font-semibold">{row.calls}</span>
                           <div className="text-xs text-muted">{row.answer_rate}% {isRTL ? 'إجابة' : 'ans'}</div>
                         </td>
-                        <td>{row.emails}</td>
                         <td>{row.whatsapp}</td>
+                        <td>{row.emails}</td>
+                        <td>
+                          <span className="font-bold" style={{ color: 'var(--color-primary)' }}>
+                            {rowTotalAct}
+                          </span>
+                        </td>
                         <td>
                           <span className="font-semibold" style={{ color: '#8b5cf6' }}>
                             {row.demos_total ?? row.demo_agreed}
@@ -1192,6 +1292,62 @@ export const DashboardPage: React.FC = () => {
                   })
                 )}
               </tbody>
+              {userPerformance.length > 0 && (
+                <tfoot>
+                  <tr style={{ backgroundColor: 'var(--bg-subtle)', fontWeight: 700, borderTop: '2px solid var(--border-color)' }}>
+                    <td>
+                      <div className="font-bold text-sm" style={{ color: 'var(--neutral-900)' }}>
+                        {isRTL ? "الإجمالي الكلي" : "Totals"} ({userPerformance.length} {isRTL ? 'مندوب' : 'reps'})
+                      </div>
+                    </td>
+                    <td>
+                      <span className="font-bold">{perfTotals.calls}</span>
+                      <div className="text-xs text-muted font-normal">
+                        {perfTotals.calls > 0 ? Math.round(((perfTotals.answered || 0) / perfTotals.calls) * 100) : 0}% {isRTL ? 'إجابة' : 'ans'}
+                      </div>
+                    </td>
+                    <td className="font-bold">{perfTotals.whatsapp}</td>
+                    <td className="font-bold">{perfTotals.emails}</td>
+                    <td>
+                      <span className="font-bold" style={{ color: 'var(--color-primary)' }}>
+                        {perfTotals.total_activities}
+                      </span>
+                    </td>
+                    <td className="font-bold" style={{ color: '#8b5cf6' }}>
+                      {perfTotals.demos_total}
+                    </td>
+                    <td>
+                      {perfTotals.demos_needs_report > 0 ? (
+                        <span className="badge badge-error text-xs font-bold">{perfTotals.demos_needs_report}</span>
+                      ) : (
+                        <span className="text-xs text-muted">0</span>
+                      )}
+                    </td>
+                    <td>
+                      <span className="text-xs font-bold" style={{ color: totalsReportRate >= 80 ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                        {totalsReportRate}%
+                      </span>
+                    </td>
+                    <td className="font-bold text-success">{perfTotals.demo_done}</td>
+                    <td className="font-bold">{perfTotals.follow_ups}</td>
+                    <td>
+                      <span className="font-bold">{perfTotals.opportunities}</span>
+                      {perfTotals.opportunities_won > 0 && (
+                        <span className="text-xs text-success" style={{ marginLeft: '4px' }}>
+                          ({perfTotals.opportunities_won} won)
+                        </span>
+                      )}
+                    </td>
+                    <td>
+                      <span className={perfTotals.overdue_tasks > 0 ? 'badge badge-error text-xs' : 'text-muted'}>
+                        {perfTotals.overdue_tasks}
+                      </span>
+                    </td>
+                    <td>—</td>
+                    <td>—</td>
+                  </tr>
+                </tfoot>
+              )}
             </table>
           </div>
         ) : (
@@ -1204,6 +1360,7 @@ export const DashboardPage: React.FC = () => {
                   <th>{isRTL ? "عدد المناديب" : "Active Reps"}</th>
                   <th>{isRTL ? "مكالمات الفريق" : "Team Calls"}</th>
                   <th>{isRTL ? "إيميل / واتساب" : "Emails / WhatsApp"}</th>
+                  <th style={{ color: 'var(--color-primary)' }}>{isRTL ? "إجمالي التواصل" : "Total Activities"}</th>
                   <th>{isRTL ? "عروض منجزة" : "Demos Done"}</th>
                   <th>{isRTL ? "الصفقات وقيمتها" : "Opps / Value"}</th>
                   <th>{isRTL ? "مهام متأخرة" : "Team Overdue"}</th>
@@ -1214,7 +1371,7 @@ export const DashboardPage: React.FC = () => {
               <tbody>
                 {(!data?.manager_performance || data.manager_performance.length === 0) ? (
                   <tr>
-                    <td colSpan={9} style={{ textAlign: 'center', padding: 'var(--space-6)' }} className="text-muted">
+                    <td colSpan={10} style={{ textAlign: 'center', padding: 'var(--space-6)' }} className="text-muted">
                       {isRTL ? "لا توجد فرق عمل مسجلة" : "No teams or managers found."}
                     </td>
                   </tr>
@@ -1243,6 +1400,11 @@ export const DashboardPage: React.FC = () => {
                           <span style={{ margin: '0 4px' }}>•</span>
                           <span>💬 {m.whatsapp}</span>
                         </div>
+                      </td>
+                      <td>
+                        <span className="font-bold" style={{ color: 'var(--color-primary)' }}>
+                          {m.total_activities ?? ((m.calls || 0) + (m.emails || 0) + (m.whatsapp || 0))}
+                        </span>
                       </td>
                       <td>
                         <span className="font-semibold text-success">{m.demos_completed}</span>

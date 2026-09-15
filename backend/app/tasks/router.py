@@ -1,5 +1,5 @@
 """
-Tasks router — full team task management, filtering, completion, and reassignment with audit logging.
+Tasks router — full team task management, filtering, completion, archiving, and reassignment with audit logging.
 """
 import uuid
 from datetime import datetime, timezone
@@ -36,6 +36,11 @@ class TaskCompleteBody(BaseModel):
     completion_notes: Optional[str] = None
 
 
+class TaskArchiveBody(BaseModel):
+    """Body for the archive action (no fields required, but allows future extensions)."""
+    pass
+
+
 def _get_task_category(t: Task) -> str:
     """Classify task into 1 of 3 required categories."""
     if t.type in ["EMAIL", "WHATSAPP"]:
@@ -50,6 +55,13 @@ def _get_task_category(t: Task) -> str:
 
 
 def _task_dict(t: Task) -> dict:
+    # Deletion deadline = 7 days after archived_at
+    deletion_deadline = None
+    if t.archived_at:
+        from datetime import timedelta
+        deadline_dt = t.archived_at + timedelta(days=7)
+        deletion_deadline = deadline_dt.isoformat()
+
     return {
         "id": str(t.id),
         "title": t.title,
@@ -69,8 +81,25 @@ def _task_dict(t: Task) -> dict:
         "due_at": t.due_at.isoformat() if t.due_at else None,
         "completed_at": t.completed_at.isoformat() if t.completed_at else None,
         "completion_notes": t.completion_notes,
+        "archived_at": t.archived_at.isoformat() if t.archived_at else None,
+        "archived_by": str(t.archived_by) if t.archived_by else None,
+        "archiver_name": t.archiver.full_name if hasattr(t, 'archiver') and t.archiver else None,
+        "deletion_deadline": deletion_deadline,
         "created_at": t.created_at.isoformat(),
     }
+
+
+def _base_task_query():
+    return (
+        select(Task)
+        .options(
+            selectinload(Task.contact),
+            selectinload(Task.assignee),
+            selectinload(Task.creator),
+            selectinload(Task.company),
+            selectinload(Task.archiver),
+        )
+    )
 
 
 @router.get("")
@@ -86,18 +115,20 @@ async def list_tasks(
     contact_id: Optional[str] = Query(None),
     company_id: Optional[str] = Query(None),
     overdue_only: bool = Query(False),
+    # archived=false (default) → active tasks only (archived_at IS NULL)
+    # archived=true → only archived tasks
+    archived: bool = Query(False),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    stmt = (
-        select(Task)
-        .options(
-            selectinload(Task.contact),
-            selectinload(Task.assignee),
-            selectinload(Task.creator),
-            selectinload(Task.company),
-        )
-    )
+    stmt = _base_task_query()
+
+    # Archived filter: active tasks exclude archived ones
+    if archived:
+        stmt = stmt.where(Task.archived_at.isnot(None))
+    else:
+        stmt = stmt.where(Task.archived_at.is_(None))
+
     # Role scoping: Manager and above see all team tasks. Sales user sees assigned only.
     target_user_filter = assigned_to or user_id
     if not current_user.is_manager_or_above:
@@ -165,9 +196,7 @@ async def create_task(
     await db.flush()
 
     # Re-fetch with relations
-    stmt = select(Task).where(Task.id == task.id).options(
-        selectinload(Task.contact), selectinload(Task.assignee), selectinload(Task.creator), selectinload(Task.company)
-    )
+    stmt = _base_task_query().where(Task.id == task.id)
     loaded = (await db.execute(stmt)).scalar_one()
     return {"data": _task_dict(loaded)}
 
@@ -178,11 +207,7 @@ async def get_task(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    stmt = (
-        select(Task)
-        .where(Task.id == task_id)
-        .options(selectinload(Task.contact), selectinload(Task.assignee), selectinload(Task.creator), selectinload(Task.company))
-    )
+    stmt = _base_task_query().where(Task.id == task_id)
     task = (await db.execute(stmt)).scalar_one_or_none()
     if not task:
         raise NotFoundError("Task not found.")
@@ -198,11 +223,7 @@ async def complete_task(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    stmt = (
-        select(Task)
-        .where(Task.id == task_id)
-        .options(selectinload(Task.contact), selectinload(Task.assignee), selectinload(Task.creator), selectinload(Task.company))
-    )
+    stmt = _base_task_query().where(Task.id == task_id)
     task = (await db.execute(stmt)).scalar_one_or_none()
     if not task:
         raise NotFoundError("Task not found.")
@@ -217,6 +238,85 @@ async def complete_task(
     return {"data": _task_dict(task)}
 
 
+@router.post("/{task_id}/archive")
+async def archive_task(
+    task_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Archive a completed Task. Only COMPLETED tasks can be archived.
+    Sets archived_at and archived_by. The task disappears from active counters.
+    Auto-cleanup job will hard-delete it if not restored within 7 days.
+    """
+    stmt = _base_task_query().where(Task.id == task_id)
+    task = (await db.execute(stmt)).scalar_one_or_none()
+    if not task:
+        raise NotFoundError("Task not found.")
+    if not current_user.is_manager_or_above and str(task.assigned_to) != str(current_user.id):
+        raise ForbiddenError("Access denied.")
+    if task.status != TaskStatus.COMPLETED:
+        from app.core.exceptions import ValidationError
+        raise ValidationError("Only completed tasks can be archived.")
+    if task.archived_at is not None:
+        from app.core.exceptions import ValidationError
+        raise ValidationError("Task is already archived.")
+
+    task.archived_at = datetime.now(timezone.utc)
+    task.archived_by = current_user.id
+    db.add(task)
+    await db.flush()
+
+    audit = AuditService(db)
+    await audit.log(
+        action="task.archived",
+        entity_type="task",
+        actor_id=current_user.id,
+        entity_id=task.id,
+        new_value={"archived_at": task.archived_at.isoformat(), "archived_by": str(current_user.id)},
+    )
+
+    return {"data": _task_dict(task)}
+
+
+@router.post("/{task_id}/restore")
+async def restore_task(
+    task_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Restore an archived Task. Clears archived_at and archived_by, resetting the 7-day timer.
+    """
+    stmt = _base_task_query().where(Task.id == task_id)
+    task = (await db.execute(stmt)).scalar_one_or_none()
+    if not task:
+        raise NotFoundError("Task not found.")
+    if not current_user.is_manager_or_above and str(task.assigned_to) != str(current_user.id):
+        raise ForbiddenError("Access denied.")
+    if task.archived_at is None:
+        from app.core.exceptions import ValidationError
+        raise ValidationError("Task is not archived.")
+
+    old_archived_at = task.archived_at.isoformat()
+    task.archived_at = None
+    task.archived_by = None
+    db.add(task)
+    await db.flush()
+
+    audit = AuditService(db)
+    await audit.log(
+        action="task.restored",
+        entity_type="task",
+        actor_id=current_user.id,
+        entity_id=task.id,
+        old_value={"archived_at": old_archived_at},
+        new_value={"archived_at": None, "restored_by": str(current_user.id)},
+    )
+
+    return {"data": _task_dict(task)}
+
+
 @router.patch("/{task_id}")
 async def update_task(
     task_id: uuid.UUID,
@@ -224,11 +324,7 @@ async def update_task(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    stmt = (
-        select(Task)
-        .where(Task.id == task_id)
-        .options(selectinload(Task.contact), selectinload(Task.assignee), selectinload(Task.creator), selectinload(Task.company))
-    )
+    stmt = _base_task_query().where(Task.id == task_id)
     task = (await db.execute(stmt)).scalar_one_or_none()
     if not task:
         raise NotFoundError("Task not found.")

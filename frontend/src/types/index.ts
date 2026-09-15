@@ -148,6 +148,8 @@ export interface Task {
   due_at: string | null;
   completed_at: string | null;
   completion_notes: string | null;
+  archived_at?: string | null;
+  archived_by?: string | null;
   created_at: string;
 }
 
@@ -193,6 +195,10 @@ export interface DemoItem {
   contact_email?: string | null;
   company_id: string | null;
   company_name: string | null;
+  company_name_snapshot?: string | null;
+  meeting_with?: string | null;
+  converted_to_follow_up_at?: string | null;
+  converted_to_follow_up_id?: string | null;
   owner_id: string | null;
   owner_name?: string | null;
   stage: string;
@@ -224,14 +230,41 @@ export interface Opportunity {
   title: string;
   contact_id: string | null;
   contact_name: string | null;
+  contact_person?: string | null;
   company_id: string | null;
   company_name: string | null;
+  company_name_snapshot?: string | null;
   owner_id: string | null;
   value: number | null;
   stage: 'NEW' | 'QUALIFIED' | 'DEMO' | 'PROPOSAL' | 'NEGOTIATION' | 'WON' | 'LOST';
   probability: number | null;
   expected_close_at: string | null;
+  notes?: string | null;
+  next_step?: string | null;
   lost_reason: string | null;
+  created_at: string;
+}
+
+export interface FollowUpItem {
+  id: string;
+  contact_id: string | null;
+  contact_name: string | null;
+  phone?: string | null;
+  email?: string | null;
+  company_id: string | null;
+  company_name: string | null;
+  company_name_snapshot?: string | null;
+  meeting_with?: string | null;
+  demo_id?: string | null;
+  user_id: string | null;
+  owner_name?: string | null;
+  type: string;
+  section: 'DEMO' | 'COMMUNICATION';
+  status: string;
+  due_at: string | null;
+  completed_at: string | null;
+  notes: string | null;
+  next_step: string | null;
   created_at: string;
 }
 

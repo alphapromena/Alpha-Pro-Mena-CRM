@@ -116,9 +116,15 @@ export const DemosPage: React.FC = () => {
     next_step: '',
     next_step_due_date: '',
     notes: '',
+    company_name_snapshot: '',
+    meeting_with: '',
+    owner_id: '',
+    scheduled_at: '',
   });
   const [reportError, setReportError] = useState<string | null>(null);
   const [isUpdatingReport, setIsUpdatingReport] = useState(false);
+  const [convertingDemoId, setConvertingDemoId] = useState<string | null>(null);
+  const [convertMessage, setConvertMessage] = useState<string | null>(null);
 
   // Import Modal State
   const [showImportModal, setShowImportModal] = useState(false);
@@ -221,6 +227,10 @@ export const DemosPage: React.FC = () => {
       next_step: demo.next_step || '',
       next_step_due_date: demo.next_step_due_date ? demo.next_step_due_date.slice(0, 10) : '',
       notes: demo.notes || '',
+      company_name_snapshot: demo.company_name_snapshot || demo.company_name || '',
+      meeting_with: demo.meeting_with || demo.contact_name || '',
+      owner_id: demo.owner_id || '',
+      scheduled_at: demo.scheduled_at ? demo.scheduled_at.slice(0, 16) : '',
     });
     setReportError(null);
   };
@@ -229,8 +239,8 @@ export const DemosPage: React.FC = () => {
     e.preventDefault();
     if (!editingDemo) return;
 
-    // Report Summary validation
-    if (!reportForm.summary.trim()) {
+    // Report Summary validation if completing a pending report
+    if (editingDemo.report_status === 'NEEDS_REPORT' && !reportForm.summary.trim()) {
       setReportError('A complete summary of what was demonstrated is mandatory.');
       return;
     }
@@ -249,8 +259,8 @@ export const DemosPage: React.FC = () => {
     setIsUpdatingReport(true);
 
     try {
-      await api.patch(`/demos/${editingDemo.id}/report`, {
-        summary: reportForm.summary.trim(),
+      await api.patch(`/demos/${editingDemo.id}`, {
+        summary: reportForm.summary.trim() || undefined,
         presenter: reportForm.presenter.trim() || undefined,
         attendees: reportForm.attendees.trim() || undefined,
         topics_covered: reportForm.topics_covered.trim() || undefined,
@@ -260,6 +270,10 @@ export const DemosPage: React.FC = () => {
         next_step: reportForm.next_step.trim() || undefined,
         next_step_due_date: reportForm.next_step_due_date ? new Date(reportForm.next_step_due_date).toISOString() : undefined,
         notes: reportForm.notes.trim() || undefined,
+        company_name_snapshot: reportForm.company_name_snapshot.trim() || undefined,
+        meeting_with: reportForm.meeting_with.trim() || undefined,
+        owner_id: reportForm.owner_id || undefined,
+        scheduled_at: reportForm.scheduled_at ? new Date(reportForm.scheduled_at).toISOString() : undefined,
       });
 
       setEditingDemo(null);
@@ -272,6 +286,25 @@ export const DemosPage: React.FC = () => {
       }
     } finally {
       setIsUpdatingReport(false);
+    }
+  };
+
+  const handleConvertToFollowUp = async (demo: DemoItem) => {
+    setConvertingDemoId(demo.id);
+    setConvertMessage(null);
+    try {
+      await api.post(`/demos/${demo.id}/convert-to-follow-up`, {
+        type: 'DEMO',
+        notes: demo.summary ? `Follow-up from Demo: ${demo.summary}` : undefined,
+        next_step: demo.next_step || undefined,
+      });
+      setConvertMessage(isRTL ? "تم تحويل العرض إلى متابعة بنجاح." : "Demo successfully converted to Follow-up.");
+      await Promise.all([fetchCounts(), fetchDemos()]);
+      setTimeout(() => setConvertMessage(null), 4000);
+    } catch (err: any) {
+      alert(err?.message || 'Failed to convert demo to follow-up.');
+    } finally {
+      setConvertingDemoId(null);
     }
   };
 
@@ -647,6 +680,26 @@ amin@alphapromena.com,2025-10-20,Amin,"Overview of lead distribution module",POS
       </div>
 
       {/* ── Demos Data Table ───────────────────────────────────────────── */}
+      {convertMessage && (
+        <div
+          style={{
+            padding: 'var(--space-3) var(--space-4)',
+            backgroundColor: '#ECFDF5',
+            border: '1px solid #10B981',
+            borderRadius: 'var(--radius-md)',
+            color: '#065F46',
+            fontSize: '13px',
+            fontWeight: 600,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+          }}
+        >
+          <CheckCircle2 size={16} />
+          <span>{convertMessage}</span>
+        </div>
+      )}
+
       {isLoading ? (
         <LoadingSpinner message={isRTL ? "جاري تحميل سجل العروض..." : "Loading demo reports & schedule..."} />
       ) : demos.length === 0 ? (
@@ -665,7 +718,7 @@ amin@alphapromena.com,2025-10-20,Amin,"Overview of lead distribution module",POS
                 <th style={{ minWidth: '140px' }}>{isRTL ? "تاريخ العرض" : "Demo Date"}</th>
                 <th style={{ minWidth: '220px' }}>{isRTL ? "الملخص والشرح" : "Summary & Topics"}</th>
                 <th style={{ minWidth: '180px' }}>{isRTL ? "الخطوة التالية" : "Next Step"}</th>
-                <th style={{ minWidth: '110px', textAlign: 'center' }}>{isRTL ? "الإجراء" : "Actions"}</th>
+                <th style={{ minWidth: '160px', textAlign: 'center' }}>{isRTL ? "الإجراء" : "Actions"}</th>
               </tr>
             </thead>
             <tbody>
@@ -758,23 +811,34 @@ amin@alphapromena.com,2025-10-20,Amin,"Overview of lead distribution module",POS
 
                     {/* Contact & Company */}
                     <td>
-                      <button
-                        onClick={() => navigate(`/contacts/${d.contact_id}`)}
-                        className="font-semibold text-xs text-left"
-                        style={{
-                          color: 'var(--neutral-900)',
-                          background: 'none',
-                          border: 'none',
-                          padding: 0,
-                          cursor: 'pointer',
-                          textDecoration: 'underline',
-                        }}
-                      >
-                        {d.contact_name || 'Contact'}
-                      </button>
-                      <div className="text-xs text-muted" style={{ marginTop: '2px' }}>
-                        {d.company_name || '—'}
+                      {d.contact_id ? (
+                        <button
+                          onClick={() => navigate(`/contacts/${d.contact_id}`)}
+                          className="font-semibold text-xs text-left"
+                          style={{
+                            color: 'var(--neutral-900)',
+                            background: 'none',
+                            border: 'none',
+                            padding: 0,
+                            cursor: 'pointer',
+                            textDecoration: 'underline',
+                          }}
+                        >
+                          {d.contact_name || 'Contact'}
+                        </button>
+                      ) : (
+                        <span className="font-semibold text-xs text-left" style={{ color: 'var(--neutral-900)' }}>
+                          {d.contact_name || 'Contact'}
+                        </span>
+                      )}
+                      <div className="text-xs text-muted" style={{ marginTop: '2px', fontWeight: 600 }}>
+                        {d.company_name_snapshot || d.company_name || '—'}
                       </div>
+                      {d.meeting_with && (
+                        <div className="text-xs" style={{ color: 'var(--color-accent)', fontSize: '11px', marginTop: '1px' }}>
+                          👤 {d.meeting_with}
+                        </div>
+                      )}
                       {d.contact_phone && (
                         <div className="text-xs font-mono text-muted">{d.contact_phone}</div>
                       )}
@@ -858,7 +922,7 @@ amin@alphapromena.com,2025-10-20,Amin,"Overview of lead distribution module",POS
                           <button
                             onClick={() => handleOpenReportModal(d)}
                             className="btn btn-accent btn-sm"
-                            style={{ fontSize: '11px', padding: '4px 8px', display: 'flex', alignItems: 'center', gap: '4px' }}
+                            style={{ fontSize: '11px', padding: '4px 8px', display: 'flex', alignItems: 'center', gap: '4px', whiteSpace: 'nowrap' }}
                           >
                             <FileText size={12} />
                             <span>Complete Report</span>
@@ -867,10 +931,42 @@ amin@alphapromena.com,2025-10-20,Amin,"Overview of lead distribution module",POS
                           <button
                             onClick={() => handleOpenReportModal(d)}
                             className="btn btn-secondary btn-sm"
-                            style={{ fontSize: '11px', padding: '4px 8px', display: 'flex', alignItems: 'center', gap: '4px' }}
+                            style={{ fontSize: '11px', padding: '4px 8px', display: 'flex', alignItems: 'center', gap: '4px', whiteSpace: 'nowrap' }}
                           >
                             <Edit3 size={12} />
                             <span>Edit</span>
+                          </button>
+                        )}
+                        {d.converted_to_follow_up_id ? (
+                          <span
+                            style={{
+                              fontSize: '10px',
+                              fontWeight: 700,
+                              padding: '3px 7px',
+                              borderRadius: '4px',
+                              backgroundColor: 'rgba(124, 58, 237, 0.1)',
+                              color: '#7c3aed',
+                              border: '1px solid rgba(124, 58, 237, 0.3)',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '3px',
+                              whiteSpace: 'nowrap',
+                            }}
+                            title="Converted to follow-up"
+                          >
+                            <ArrowRight size={10} />
+                            In Follow-up
+                          </span>
+                        ) : (
+                          <button
+                            onClick={() => handleConvertToFollowUp(d)}
+                            disabled={convertingDemoId === d.id}
+                            className="btn btn-secondary btn-sm"
+                            style={{ fontSize: '11px', padding: '4px 8px', display: 'flex', alignItems: 'center', gap: '4px', whiteSpace: 'nowrap' }}
+                            title="Convert demo to Follow-up"
+                          >
+                            <ArrowRight size={12} />
+                            <span>{convertingDemoId === d.id ? 'Moving...' : 'Move to Follow-up'}</span>
                           </button>
                         )}
                       </div>
@@ -928,6 +1024,56 @@ amin@alphapromena.com,2025-10-20,Amin,"Overview of lead distribution module",POS
             <div className="text-xs text-muted">TARGET CONTACT & ACCOUNT</div>
             <div className="font-bold text-sm" style={{ color: 'var(--neutral-900)', marginTop: '2px' }}>
               {editingDemo?.contact_name} ({editingDemo?.company_name || 'No Company'})
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-3)' }}>
+            <div className="form-group">
+              <label className="form-label font-semibold text-xs">Company Name (Free-text / Snapshot)</label>
+              <input
+                type="text"
+                className="form-input"
+                placeholder="Account name..."
+                value={reportForm.company_name_snapshot}
+                onChange={(e) => setReportForm({ ...reportForm, company_name_snapshot: e.target.value })}
+              />
+            </div>
+            <div className="form-group">
+              <label className="form-label font-semibold text-xs">Meeting With (Client Attendee)</label>
+              <input
+                type="text"
+                className="form-input"
+                placeholder="Client attendee / contact person..."
+                value={reportForm.meeting_with}
+                onChange={(e) => setReportForm({ ...reportForm, meeting_with: e.target.value })}
+              />
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-3)' }}>
+            <div className="form-group">
+              <label className="form-label font-semibold text-xs">Demo Owner</label>
+              <select
+                className="form-select"
+                value={reportForm.owner_id}
+                onChange={(e) => setReportForm({ ...reportForm, owner_id: e.target.value })}
+              >
+                <option value="">Select owner...</option>
+                {usersList.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.full_name} ({u.role})
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="form-group">
+              <label className="form-label font-semibold text-xs">Scheduled At</label>
+              <input
+                type="datetime-local"
+                className="form-input"
+                value={reportForm.scheduled_at}
+                onChange={(e) => setReportForm({ ...reportForm, scheduled_at: e.target.value })}
+              />
             </div>
           </div>
 
